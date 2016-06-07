@@ -134,16 +134,18 @@ class ECSClient(object):
         @param service_id: ecs service id
         @param last_event: the last seen event from the ecs service
         """
-        looped = 0
-        for service in self.describe_services([service_id]).values():
-            if looped > 6:
-                # TIMEOUT
-                break
-            looped += 1
-
-            time.sleep(10)
-            for event in service['events']:
+        # ECS can be a little slow. replacing services can take several minutes
+        TIMEOUT = 600
+        started = time.time()
+        last_seen = last_event
+        while time.time() - started < TIMEOUT:
+            service_desc = self.describe_services([service_id])[service_id]
+            for event in service_desc['events']:
+                if event['createdAt'] > last_seen['createdAt']:
+                    last_seen = event
                 if event['createdAt'] > last_event['createdAt']:
                     if "has reached a steady state" in event['message']:
-                        return event
-        return last_event
+                        return True, event
+            time.sleep(10)
+
+        return False, last_seen

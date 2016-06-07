@@ -15,16 +15,16 @@ import ssh
 import utils
 
 
-def sort_and_check_availability_zones(instance_descriptions, asg_instances):
+def sort_and_check_availability_zones(instance_descriptions, instances_in_asg):
     """
     sorts the instances into an order that tries not to cause an AZ imbalance
     when removing instances. Also, prompts the user if there are issues.
     @param instance_descriptions: dict of ec2_ids to descriptions
-    @param asg_instances: list of asg instance dicts
+    @param instances_in_asg: list of instance dicts in the asg
     @return: sorted list of instances to remove
     """
     asg_instances_to_zones = {}
-    for asg_instance in asg_instances:
+    for asg_instance in instances_in_asg:
         ec2_id = asg_instance['InstanceId']
         asg_instances_to_zones[ec2_id] = asg_instance['AvailabilityZone']
 
@@ -50,7 +50,7 @@ def sort_and_check_availability_zones(instance_descriptions, asg_instances):
     # order by zone with the most instances first
     zone_counts = sorted(to_remove.items(),
                          key=itemgetter(1),
-                         cmp=lambda a,b: cmp(len(a), len(b)),
+                         cmp=lambda a, b: cmp(len(a), len(b)),
                          reverse=True)
     for az in itertools.cycle([z[0] for z in zone_counts]):
         if to_remove[az]:
@@ -185,7 +185,8 @@ def main():
 
     # Prompt the user for the instances to adjust
     cluster_instances = ecs_client.list_cluster_instances()
-    selected_instances = prompt_for_instances(cluster_instances)
+    selected_instances = prompt_for_instances(cluster_instances,
+                                              args.scale_down)
     if not selected_instances:
         return
 
@@ -231,7 +232,10 @@ def main():
         #
         # Remove ECS instance from scaling group
         #
-        sys.stdout.write("Removing EC2 instance %s from scaling group and waiting for replacements..." % (ec2_id))
+        if args.scale_down:
+            sys.stdout.write("Remove EC2 instance %s from scaling group..." % (ec2_id))
+        else:
+            sys.stdout.write("Removing EC2 instance %s from scaling group and waiting for replacement..." % (ec2_id))
         sys.stdout.flush()
         if not args.noop:
             if args.scale_down:
@@ -252,25 +256,36 @@ def main():
         #
         # Wait for task migrations
         #
-        sys.stdout.write("Rolling over services from %s ..." % (ecs_id))
-        sys.stdout.flush()
-        if not args.noop:
-            for service_id in ecs_instance_services[ecs_id]:
-                last_event = service_events[service_id][-1]
-                event = ecs_client.wait_for_service_steady_state(service_id,
-                                                                 last_event)
-                # push the new event into the list for that service so that
-                # the next instance doesn't confuse this event for its own
-                service_events[service_id].append(event)
+        services_on_instance = ecs_instance_services.get(ecs_id, [])
+        if services_on_instance:
+            sys.stdout.write("Rolling over services from %s ..." % (ecs_id))
+            sys.stdout.flush()
+            if not args.noop:
+                for service_id in services_on_instance:
+                    last_event = service_events[service_id][-1]
+                    completed, event = ecs_client.wait_for_service_steady_state(service_id,
+                                                                                last_event)
+                    if not completed:
+                        print "TIMEOUT"
+                        print "Timeout hit while waiting for %s to reach steady state" % (service_id)
 
-                # remove the current instance from the ELB if there is one
-                # defined
-                service = service_descriptions[service_id]
-                for balancer in service.get('loadBalancers', []):
-                    elb_client = elb.ELBClient(balancer['loadBalancerName'])
-                    elb_client.deregister_instances([ec2_id])
+                    # push the new event into the list for that service so
+                    # that the next instance doesn't confuse this event for
+                    # its own
+                    service_events[service_id].append(event)
+            print "done"
 
-        print "done"
+            sys.stdout.write("Removing %s from any service ELBs..." % (ec2_id))
+            sys.stdout.flush()
+            if not args.noop:
+                for service_id in services_on_instance:
+                    # remove the current instance from the ELB if there is one
+                    # defined
+                    service = service_descriptions[service_id]
+                    for balancer in service.get('loadBalancers', []):
+                        elb_client = elb.ELBClient(balancer['loadBalancerName'])
+                        elb_client.deregister_instances([ec2_id])
+            print "done"
 
         #
         # stop all the docker containers on the machine

@@ -27,7 +27,7 @@ class AutoScalingGroup(object):
         for resp in paginator.paginate(AutoScalingGroupNames=[self.scaling_group]):
             info += resp['AutoScalingGroups']
 
-        # there should only be one ASG!
+        # Only queried one ASG
         return info[0].get('Instances', [])
 
     def describe_scaling_activities(self):
@@ -70,12 +70,11 @@ class AutoScalingGroup(object):
         @return: most recent activity
         """
         new_activities = []
-        looped = 0
+        TIMEOUT = 300
+        started = time.time()
         while len(new_activities) < count:
-            if looped > 6:
-                # TIMEOUT
+            if time.time() - started > TIMEOUT:
                 return last_activity
-            looped += 1
 
             time.sleep(10)
             for activity in self.describe_scaling_activities():
