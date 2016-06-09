@@ -206,25 +206,10 @@ def main():
         return
 
     #
-    # Query all services and tasks on each ECS instance
-    #
-    sys.stdout.write("Querying ECS services...")
-    sys.stdout.flush()
-    service_ids = ecs_client.list_services()
-    service_descriptions = ecs_client.describe_services(service_ids)
-    service_events = map_service_events(service_descriptions)
-
-    task_ids = ecs_client.list_tasks()
-    task_descriptions = ecs_client.describe_tasks(task_ids)
-    ecs_instance_services = map_instance_services(service_descriptions,
-                                                  task_descriptions)
-    asg_ids = [asg_instance['InstanceId'] for asg_instance in asg_instances]
-    sorted_asg_ids = [ec2_id for ec2_id in sorted_ec2_ids if ec2_id in asg_ids]
-    print "done"
-
-    #
     # Iterate through each instance
     #
+    asg_ids = [asg_instance['InstanceId'] for asg_instance in asg_instances]
+    sorted_asg_ids = [ec2_id for ec2_id in sorted_ec2_ids if ec2_id in asg_ids]
     for ec2_id in sorted_asg_ids:
         ecs_id = ec2_to_ecs_id[ec2_id]
         print "Preparing to remove %s (%s)" % (ecs_id, ec2_id)
@@ -243,6 +228,24 @@ def main():
             else:
                 asg.detach_instances_and_wait([ec2_id])
         print "done"
+
+        #
+        # Query services and tasks just before calling
+        #
+        # NOTE: If a deployment is made and scheduled to the machine being
+        # removed after the services and tasks are queried, but before
+        # deregister_container_instance() is called, then it wont be tracked
+        # and removed during the rollover. The following calls are grouped
+        # together as closely as possible to minimize this risk.
+        #
+        service_ids = ecs_client.list_services()
+        service_descriptions = ecs_client.describe_services(service_ids)
+        service_events = map_service_events(service_descriptions)
+
+        task_ids = ecs_client.list_tasks()
+        task_descriptions = ecs_client.describe_tasks(task_ids)
+        ecs_instance_services = map_instance_services(service_descriptions,
+                                                      task_descriptions)
 
         #
         # De-register instances from ECS
@@ -299,16 +302,21 @@ def main():
                 print "WARNING: Failed to stop all containers"
         print "done"
 
-    #
-    # Stop and terminate the EC2 instance
-    #
-    sys.stdout.write("Stopping and Terminating all ec2 instances...")
-    sys.stdout.flush()
-    if not args.noop:
-        ec2_client.stop_and_wait_for_instances(ec2_ids)
-        ec2_client.terminate_and_wait_for_instances(ec2_ids)
-    print "done"
-    print "Rollover complete!"
+        #
+        # Stop and terminate the EC2 instance
+        #
+        sys.stdout.write("Stopping and Terminating %s ..." % (ec2_id))
+        sys.stdout.flush()
+        if not args.noop:
+            ec2_client.stop_and_wait_for_instances([ec2_id])
+            ec2_client.terminate_and_wait_for_instances([ec2_id])
+        print "done"
+        print
+
+    if args.scale_down:
+        print "Scale down complete!"
+    else:
+        print "Rollover complete!"
 
 
 if __name__ == "__main__":
