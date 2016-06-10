@@ -94,7 +94,7 @@ class ECSClient(object):
                                                   containerInstance=instance_id,
                                                   force=True)
 
-    def list_cluster_instances(self):
+    def list_container_instances(self):
         """
         @return: list of ecs instance ids
         """
@@ -104,6 +104,18 @@ class ECSClient(object):
         for resp in paginator.paginate(cluster=self.cluster):
             arns += resp['containerInstanceArns']
         return [utils.pull_instance_id(arn) for arn in arns]
+
+    def list_active_ec2_instances(self):
+        """
+        @return: list of ec2 ids in the cluster
+        """
+        ecs_ids = self.list_container_instances()
+        ecs_descriptions = self.describe_instances(ecs_ids)
+        active_instances = []
+        for desc in ecs_descriptions.values():
+            if desc['agentConnected'] and desc['status'] == 'ACTIVE':
+                active_instances.append(desc['ec2InstanceId'])
+        return active_instances
 
     def list_services(self):
         """

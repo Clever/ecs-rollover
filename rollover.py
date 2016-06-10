@@ -5,6 +5,7 @@ import itertools
 from operator import itemgetter
 import os
 import sys
+import time
 
 # local imports
 import ec2
@@ -155,11 +156,24 @@ def map_instance_services(service_descriptions, task_descriptions):
     return instance_services
 
 
+def get_added_asg_instances(old_instances, new_instances):
+    """
+    diff two lists of asg instance dicts
+    @param old_instances: list of asg instance dictionaries
+    @param new_instances: list of asg instance dictionaries
+    @return: list of new instances (ec2 ids) in the asg
+    """
+    old_ids = [i['InstanceId'] for i in old_instances]
+    new_ids = [i['InstanceId'] for i in new_instances]
+    return [i for i in new_ids if i not in old_ids]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-s',
                         '--scale-down',
                         action="store_true",
+                        default=False,
                         help="scale the cluster down instead of rolling over")
     parser.add_argument('-t',
                         '--timeout',
@@ -169,12 +183,17 @@ def main():
     parser.add_argument('-n',
                         '--noop',
                         action="store_true",
+                        default=False,
                         help="dry run. Don't actually make changes.")
     parser.add_argument('cluster',
                         help="fully qualified name of the cluster")
     parser.add_argument('asg',
                         help="auto scaling group for the cluster")
     args = parser.parse_args()
+
+    if args.noop:
+        print "############## NO-OP MODE ##############"
+        print
 
     #
     # Create AWS connections
@@ -184,7 +203,7 @@ def main():
     asg = scaling.AutoScalingGroup(args.asg)
 
     # Prompt the user for the instances to adjust
-    cluster_instances = ecs_client.list_cluster_instances()
+    cluster_instances = ecs_client.list_container_instances()
     selected_instances = prompt_for_instances(cluster_instances,
                                               args.scale_down)
     if not selected_instances:
@@ -228,6 +247,20 @@ def main():
             else:
                 asg.detach_instances_and_wait([ec2_id])
         print "done"
+
+        #
+        # Wait for new ec2 instance to join the ECS cluster
+        #
+        if not args.scale_down and not args.noop:
+            new_asg_instances = asg.describe_instances()
+            new_ec2_id = get_added_asg_instances(asg_instances,
+                                                 new_asg_instances)[0]
+            asg_instances = new_asg_instances
+            sys.stdout.write("Waiting for replacement instance %s to join ECS..." % (new_ec2_id))
+            sys.stdout.flush()
+            while new_ec2_id not in ecs_client.list_active_ec2_instances():
+                time.sleep(10)
+            print "done"
 
         #
         # Query services and tasks just before calling
