@@ -74,7 +74,7 @@ class ECSClient(object):
         # API is limited to 10 at a time
         for batch in utils.batch_list(10, task_arns):
             resp = self.client.describe_tasks(cluster=self.cluster,
-                                              tasks=task_arns)
+                                              tasks=batch)
             if resp.get('failures'):
                 raise ECSError(resp['arn'], resp['reason'])
 
