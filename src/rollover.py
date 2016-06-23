@@ -168,29 +168,10 @@ def get_added_asg_instances(old_instances, new_instances):
     return [i for i in new_ids if i not in old_ids]
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-s',
-                        '--scale-down',
-                        action="store_true",
-                        default=False,
-                        help="scale the cluster down instead of rolling over")
-    parser.add_argument('-t',
-                        '--timeout',
-                        type=int,
-                        default=30,
-                        help="`docker stop` timeout")
-    parser.add_argument('-n',
-                        '--noop',
-                        action="store_true",
-                        default=False,
-                        help="dry run. Don't actually make changes.")
-    parser.add_argument('cluster',
-                        help="fully qualified name of the cluster")
-    parser.add_argument('asg',
-                        help="auto scaling group for the cluster")
-    args = parser.parse_args()
-
+def main_rollover(args):
+    """
+    Main entry point for rollover and scaledown commands
+    """
     if args.noop:
         print "############## NO-OP MODE ##############"
         print
@@ -350,6 +331,95 @@ def main():
         print "Scale down complete!"
     else:
         print "Rollover complete!"
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers()
+
+    #
+    # Rollover args
+    #
+    rollover_parser = subparsers.add_parser('rollover',
+                                            help="rollover ECS nodes")
+    rollover_parser.set_defaults(func=main_rollover, scale_down=False)
+
+    rollover_parser.add_argument('-t',
+                                 '--timeout',
+                                 type=int,
+                                 default=30,
+                                 help="`docker stop` timeout")
+    rollover_parser.add_argument('-n',
+                                 '--noop',
+                                 action="store_true",
+                                 default=False,
+                                 help="dry run. Don't actually make changes.")
+    rollover_parser.add_argument('cluster',
+                                 help="fully qualified name of the cluster")
+    rollover_parser.add_argument('asg',
+                                 help="auto scaling group for the cluster")
+
+    #
+    # Scaledown args
+    #
+    scaledown_parser = subparsers.add_parser('scaledown',
+                                             help="remove ECS nodes")
+    scaledown_parser.set_defaults(func=main_rollover, scale_down=True)
+
+    scaledown_parser.add_argument('-t',
+                                  '--timeout',
+                                  type=int,
+                                  default=30,
+                                  help="`docker stop` timeout")
+    scaledown_parser.add_argument('-n',
+                                  '--noop',
+                                  action="store_true",
+                                  default=False,
+                                  help="dry run. Don't actually make changes.")
+    scaledown_parser.add_argument('cluster',
+                                  help="fully qualified name of the cluster")
+    scaledown_parser.add_argument('asg',
+                                  help="auto scaling group for the cluster")
+
+    #
+    # elb-detach args
+    #
+    elb_detach_parser = subparsers.add_parser('elb-detach',
+                                              help="Remove an EC2 instance "
+                                                   "from ELBs")
+    elb_detach_parser.set_defaults(func=elb.main_detach)
+
+    elb_detach_parser.add_argument('ec2_id',
+                                   help="EC2 instance id")
+    elb_detach_parser.add_argument('load_balancer_name',
+                                   nargs='*',
+                                   help="load balancer to detach from. "
+                                        "If not provided, all will be queried")
+
+    #
+    # ec2-stop args
+    #
+    ec2_stop_parser = subparsers.add_parser('ec2-stop',
+                                            help="Stop EC2 instances")
+    ec2_stop_parser.set_defaults(func=ec2.main_stop)
+
+    ec2_stop_parser.add_argument('ec2_id',
+                                 nargs='+',
+                                 help="EC2 instance id")
+
+    #
+    # ec2-terminate args
+    #
+    ec2_terminate_parser = subparsers.add_parser('ec2-terminate',
+                                                 help="Terminate EC2 instances")
+    ec2_terminate_parser.set_defaults(func=ec2.main_terminate)
+
+    ec2_terminate_parser.add_argument('ec2_id',
+                                      nargs='+',
+                                      help="EC2 instance id")
+
+    args = parser.parse_args()
+    args.func(args)
 
 
 if __name__ == "__main__":

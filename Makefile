@@ -1,5 +1,6 @@
-.PHONY: install_deps
+.PHONY: build run
 
-install_deps:
-	pip install -r requirements.txt
+
+build:
+	docker build -t ${USER}/ecs-rollover:local .
 

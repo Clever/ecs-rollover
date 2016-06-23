@@ -27,46 +27,53 @@ This script is used to safely rollover or scale down ECS nodes.
 ## Dependencies
 
 ```
-pip install virtualenvwrapper
-source /usr/local/bin/virtualenvwrapper.sh
-mkvirtualenv ecs-rollover
-make install_deps
+make build
 ```
 
 
-You will need AWS credentials configured before running this script. Configuring them is the same as for the ECS command line interface. See [ECS CLI Configuration docs](http://docs.aws.amazon.com/AmazonECS/latest/developerguide/ECS_CLI_Configuration.html) for details.
+You will need to set 3 AWS environment variables to run this script:
+
+  - `AWS_ACCESS_KEY_ID`
+  - `AWS_SECRET_ACCESS_KEY`
+  - `AWS_REGION`
 
 
-## rollover.py
+## rollover.sh
 
 The most basic usage only requires a cluster name and scaling group:
 ```
-./rollover <cluster_name> <asg name>
+./rollover.sh rollover <cluster_name> <asg name>
 ```
 
 To scaledown instead, add the `-s` option: 
 ```
-./rollover -s <cluster_name> <asg name>
+./rollover.sh scaledown <cluster_name> <asg name>
 ```
 
 See `--help` for additional options and usage.
 
-## Other Tools
+## Other Commands
 
 In case the rollover or scale down process fails, there are some utilities to make recovering/continuing easier.
 
-### elb.py
+### elb-detach
 
-You can remove an ec2 instance from a specific elb or from all of them using the elb script:
+You can remove an ec2 instance from a specific elb or from all of them using the elb-detach command:
 
 ```
-./elb.py detach <ec2_id> [elb_name [elb_name ...]]
+./rollover.sh elb-detach <ec2_id> [elb_name [elb_name ...]]
 ```
 
-### ec2.py
+### ec2-stop
 
-The ec2 script allows you to stop or terminate ec2 instances:
+The ec2-stop command allows you to stop ec2 instances:
 ```
-./ec2.py {stop,terminate} ec2_id [ec2_id ...]
+./rollover.sh ec2-stop ec2_id [ec2_id ...]
 ```
 
+### ec2-terminate
+
+The ec2-terminate command allows you to terminate ec2 instances:
+```
+./rollover.sh ec2-terminate ec2_id [ec2_id ...]
+```
