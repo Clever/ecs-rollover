@@ -45,7 +45,7 @@ The most basic usage only requires a cluster name and scaling group:
 ./rollover.sh rollover <cluster_name> <asg name>
 ```
 
-To scaledown instead, add the `-s` option: 
+To remove nodes instead, use the scaledown command: 
 ```
 ./rollover.sh scaledown <cluster_name> <asg name>
 ```

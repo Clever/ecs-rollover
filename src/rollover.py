@@ -172,8 +172,8 @@ def main_rollover(args):
     """
     Main entry point for rollover and scaledown commands
     """
-    if args.noop:
-        print "############## NO-OP MODE ##############"
+    if args.dry_run:
+        print "############## DRY RUN MODE ##############"
         print
 
     #
@@ -222,7 +222,7 @@ def main_rollover(args):
         else:
             sys.stdout.write("Removing EC2 instance %s from scaling group and waiting for replacement..." % (ec2_id))
         sys.stdout.flush()
-        if not args.noop:
+        if not args.dry_run:
             if args.scale_down:
                 asg.detach_instances([ec2_id], scale_down=True)
             else:
@@ -232,7 +232,7 @@ def main_rollover(args):
         #
         # Wait for new ec2 instance to join the ECS cluster
         #
-        if not args.scale_down and not args.noop:
+        if not args.scale_down and not args.dry_run:
             new_asg_instances = asg.describe_instances()
             new_ec2_id = get_added_asg_instances(asg_instances,
                                                  new_asg_instances)[0]
@@ -266,7 +266,7 @@ def main_rollover(args):
         #
         sys.stdout.write("De-registering instance %s from ECS..." % (ecs_id))
         sys.stdout.flush()
-        if not args.noop:
+        if not args.dry_run:
             ecs_client.deregister_container_instance(ecs_id)
         print "done"
 
@@ -277,7 +277,7 @@ def main_rollover(args):
         if services_on_instance:
             sys.stdout.write("Rolling over services from %s ..." % (ecs_id))
             sys.stdout.flush()
-            if not args.noop:
+            if not args.dry_run:
                 for service_id in services_on_instance:
                     last_event = service_events[service_id][-1]
                     completed, event = ecs_client.wait_for_service_steady_state(service_id,
@@ -294,7 +294,7 @@ def main_rollover(args):
 
             sys.stdout.write("Removing %s from any service ELBs..." % (ec2_id))
             sys.stdout.flush()
-            if not args.noop:
+            if not args.dry_run:
                 for service_id in services_on_instance:
                     # remove the current instance from the ELB if there is one
                     # defined
@@ -310,7 +310,7 @@ def main_rollover(args):
         sys.stdout.write("Stopping containers on %s ..." % (ec2_id))
         sys.stdout.flush()
         ip_address = ec2_descriptions[ec2_id]['PrivateIpAddress']
-        if not args.noop:
+        if not args.dry_run:
             if not ssh.stop_all_containers(ip_address, args.timeout):
                 print "FAILED"
                 print "WARNING: Failed to stop all containers"
@@ -321,7 +321,7 @@ def main_rollover(args):
         #
         sys.stdout.write("Stopping and Terminating %s ..." % (ec2_id))
         sys.stdout.flush()
-        if not args.noop:
+        if not args.dry_run:
             ec2_client.stop_and_wait_for_instances([ec2_id])
             ec2_client.terminate_and_wait_for_instances([ec2_id])
         print "done"
@@ -349,8 +349,7 @@ def main():
                                  type=int,
                                  default=30,
                                  help="`docker stop` timeout")
-    rollover_parser.add_argument('-n',
-                                 '--noop',
+    rollover_parser.add_argument('--dry-run',
                                  action="store_true",
                                  default=False,
                                  help="dry run. Don't actually make changes.")
@@ -371,8 +370,7 @@ def main():
                                   type=int,
                                   default=30,
                                   help="`docker stop` timeout")
-    scaledown_parser.add_argument('-n',
-                                  '--noop',
+    scaledown_parser.add_argument('--dry-run',
                                   action="store_true",
                                   default=False,
                                   help="dry run. Don't actually make changes.")
