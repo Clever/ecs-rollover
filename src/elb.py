@@ -3,7 +3,6 @@
 module for interacting with Elastic Load Balancers (ELBs)
 """
 
-import argparse
 import boto3
 import sys
 
@@ -44,20 +43,10 @@ class ELBClient(object):
         return [i['InstanceId'] for i in resp['Instances']]
 
 
-if __name__ == "__main__":
-    commands = ['detach']
-    parser = argparse.ArgumentParser()
-    parser.add_argument('command',
-                        choices=commands,
-                        help="ELB operation")
-    parser.add_argument('ec2_id',
-                        help="EC2 instance id")
-    parser.add_argument('load_balancer_name',
-                        nargs='*',
-                        help="load balancer to detach from. "
-                             "If not provided, all will be queried")
-    args = parser.parse_args()
-
+def main_detach(args):
+    """
+    Main entry point for detach command
+    """
     if args.load_balancer_name:
         load_balancers = args.load_balancer_name
     else:

@@ -168,31 +168,12 @@ def get_added_asg_instances(old_instances, new_instances):
     return [i for i in new_ids if i not in old_ids]
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('-s',
-                        '--scale-down',
-                        action="store_true",
-                        default=False,
-                        help="scale the cluster down instead of rolling over")
-    parser.add_argument('-t',
-                        '--timeout',
-                        type=int,
-                        default=30,
-                        help="`docker stop` timeout")
-    parser.add_argument('-n',
-                        '--noop',
-                        action="store_true",
-                        default=False,
-                        help="dry run. Don't actually make changes.")
-    parser.add_argument('cluster',
-                        help="fully qualified name of the cluster")
-    parser.add_argument('asg',
-                        help="auto scaling group for the cluster")
-    args = parser.parse_args()
-
-    if args.noop:
-        print "############## NO-OP MODE ##############"
+def main_rollover(args):
+    """
+    Main entry point for rollover and scaledown commands
+    """
+    if args.dry_run:
+        print "############## DRY RUN MODE ##############"
         print
 
     #
@@ -241,7 +222,7 @@ def main():
         else:
             sys.stdout.write("Removing EC2 instance %s from scaling group and waiting for replacement..." % (ec2_id))
         sys.stdout.flush()
-        if not args.noop:
+        if not args.dry_run:
             if args.scale_down:
                 asg.detach_instances([ec2_id], scale_down=True)
             else:
@@ -251,7 +232,7 @@ def main():
         #
         # Wait for new ec2 instance to join the ECS cluster
         #
-        if not args.scale_down and not args.noop:
+        if not args.scale_down and not args.dry_run:
             new_asg_instances = asg.describe_instances()
             new_ec2_id = get_added_asg_instances(asg_instances,
                                                  new_asg_instances)[0]
@@ -285,7 +266,7 @@ def main():
         #
         sys.stdout.write("De-registering instance %s from ECS..." % (ecs_id))
         sys.stdout.flush()
-        if not args.noop:
+        if not args.dry_run:
             ecs_client.deregister_container_instance(ecs_id)
         print "done"
 
@@ -296,7 +277,7 @@ def main():
         if services_on_instance:
             sys.stdout.write("Rolling over services from %s ..." % (ecs_id))
             sys.stdout.flush()
-            if not args.noop:
+            if not args.dry_run:
                 for service_id in services_on_instance:
                     last_event = service_events[service_id][-1]
                     completed, event = ecs_client.wait_for_service_steady_state(service_id,
@@ -313,7 +294,7 @@ def main():
 
             sys.stdout.write("Removing %s from any service ELBs..." % (ec2_id))
             sys.stdout.flush()
-            if not args.noop:
+            if not args.dry_run:
                 for service_id in services_on_instance:
                     # remove the current instance from the ELB if there is one
                     # defined
@@ -329,7 +310,7 @@ def main():
         sys.stdout.write("Stopping containers on %s ..." % (ec2_id))
         sys.stdout.flush()
         ip_address = ec2_descriptions[ec2_id]['PrivateIpAddress']
-        if not args.noop:
+        if not args.dry_run:
             if not ssh.stop_all_containers(ip_address, args.timeout):
                 print "FAILED"
                 print "WARNING: Failed to stop all containers"
@@ -340,7 +321,7 @@ def main():
         #
         sys.stdout.write("Stopping and Terminating %s ..." % (ec2_id))
         sys.stdout.flush()
-        if not args.noop:
+        if not args.dry_run:
             ec2_client.stop_and_wait_for_instances([ec2_id])
             ec2_client.terminate_and_wait_for_instances([ec2_id])
         print "done"
@@ -350,6 +331,93 @@ def main():
         print "Scale down complete!"
     else:
         print "Rollover complete!"
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers()
+
+    #
+    # Rollover args
+    #
+    rollover_parser = subparsers.add_parser('rollover',
+                                            help="rollover ECS nodes")
+    rollover_parser.set_defaults(func=main_rollover, scale_down=False)
+
+    rollover_parser.add_argument('-t',
+                                 '--timeout',
+                                 type=int,
+                                 default=30,
+                                 help="`docker stop` timeout")
+    rollover_parser.add_argument('--dry-run',
+                                 action="store_true",
+                                 default=False,
+                                 help="dry run. Don't actually make changes.")
+    rollover_parser.add_argument('cluster',
+                                 help="fully qualified name of the cluster")
+    rollover_parser.add_argument('asg',
+                                 help="auto scaling group for the cluster")
+
+    #
+    # Scaledown args
+    #
+    scaledown_parser = subparsers.add_parser('scaledown',
+                                             help="remove ECS nodes")
+    scaledown_parser.set_defaults(func=main_rollover, scale_down=True)
+
+    scaledown_parser.add_argument('-t',
+                                  '--timeout',
+                                  type=int,
+                                  default=30,
+                                  help="`docker stop` timeout")
+    scaledown_parser.add_argument('--dry-run',
+                                  action="store_true",
+                                  default=False,
+                                  help="dry run. Don't actually make changes.")
+    scaledown_parser.add_argument('cluster',
+                                  help="fully qualified name of the cluster")
+    scaledown_parser.add_argument('asg',
+                                  help="auto scaling group for the cluster")
+
+    #
+    # elb-detach args
+    #
+    elb_detach_parser = subparsers.add_parser('elb-detach',
+                                              help="Remove an EC2 instance "
+                                                   "from ELBs")
+    elb_detach_parser.set_defaults(func=elb.main_detach)
+
+    elb_detach_parser.add_argument('ec2_id',
+                                   help="EC2 instance id")
+    elb_detach_parser.add_argument('load_balancer_name',
+                                   nargs='*',
+                                   help="load balancer to detach from. "
+                                        "If not provided, all will be queried")
+
+    #
+    # ec2-stop args
+    #
+    ec2_stop_parser = subparsers.add_parser('ec2-stop',
+                                            help="Stop EC2 instances")
+    ec2_stop_parser.set_defaults(func=ec2.main_stop)
+
+    ec2_stop_parser.add_argument('ec2_id',
+                                 nargs='+',
+                                 help="EC2 instance id")
+
+    #
+    # ec2-terminate args
+    #
+    ec2_terminate_parser = subparsers.add_parser('ec2-terminate',
+                                                 help="Terminate EC2 instances")
+    ec2_terminate_parser.set_defaults(func=ec2.main_terminate)
+
+    ec2_terminate_parser.add_argument('ec2_id',
+                                      nargs='+',
+                                      help="EC2 instance id")
+
+    args = parser.parse_args()
+    args.func(args)
 
 
 if __name__ == "__main__":

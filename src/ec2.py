@@ -4,7 +4,6 @@
 module for interacting with EC2
 """
 
-import argparse
 import boto3
 
 
@@ -72,20 +71,17 @@ class EC2Client(object):
         waiter.wait(DryRun=False, InstanceIds=ec2_ids)
 
 
-if __name__ == "__main__":
+def main_stop(args):
+    """
+    Main entry point for the ec2-stop command
+    """
     ec2_client = EC2Client()
-    commands = {
-        'stop': ec2_client.stop_and_wait_for_instances,
-        'terminate': ec2_client.terminate_and_wait_for_instances
-    }
-    parser = argparse.ArgumentParser()
-    parser.add_argument('command',
-                        choices=commands.keys(),
-                        help="EC2 operation")
-    parser.add_argument('ec2_id',
-                        nargs='+',
-                        help="EC2 instance id")
-    args = parser.parse_args()
+    return ec2_client.stop_and_wait_for_instances(args.ec2_id)
 
-    # run command
-    commands[args.command](args.ec2_id)
+
+def main_terminate(args):
+    """
+    Main entry point for the ec2-terminate command
+    """
+    ec2_client = EC2Client()
+    return ec2_client.terminate_and_wait_for_instances(args.ec2_id)
