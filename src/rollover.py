@@ -16,35 +16,88 @@ import ssh
 import utils
 
 
-def sort_and_check_availability_zones(instance_descriptions, instances_in_asg):
+class ECSInstance(object):
+    """
+    properties:
+      - ecs_id
+      - ec2_id
+      - availability_zone
+      - ip_address
+    """
+    def __init__(self, ecs_client, ec2_client, ecs_id):
+        self.ecs_client = ecs_client
+        self.ec2_client = ec2_client
+        self.ecs_id = ecs_id
+
+        self._populate_ecs_info()
+        self._populate_ec2_info()
+
+    def _populate_ecs_info(self):
+        info = self.ecs_client.describe_instances([self.ecs_id])
+        self.ec2_id = info[self.ecs_id]['ec2InstanceId']
+
+    def _populate_ec2_info(self):
+        info = self.ec2_client.describe_instances([self.ec2_id])
+        self.availability_zone = info[self.ec2_id]['Placement']['AvailabilityZone']
+        self.ip_address = info[self.ec2_id]['PrivateIpAddress']
+
+    def __cmp__(self, other):
+        return cmp(self.ecs_id, other.ecs_id)
+
+    def __repr__(self):
+        return "%s (%s - %s)" % (self.ecs_id, self.ec2_id, self.availability_zone)
+
+
+def prompt_for_instances(ecs_instances, asg_contents, scale_down=False):
     """
     sorts the instances into an order that tries not to cause an AZ imbalance
     when removing instances. Also, prompts the user if there are issues.
-    @param instance_descriptions: dict of ec2_ids to descriptions
-    @param instances_in_asg: list of instance dicts in the asg
-    @return: sorted list of instances to remove
+    @param ecs_instances: list of ECSInstance() objects
+    @param asg_contents: dictionary of ec2_ids to availability zones in the ASG
+    @param scale_down: bool if scale down or rollover
+    @return: sorted list of ECSInstance() objects to remove
     """
-    asg_instances_to_zones = {}
-    for asg_instance in instances_in_asg:
-        ec2_id = asg_instance['InstanceId']
-        asg_instances_to_zones[ec2_id] = asg_instance['AvailabilityZone']
+    # ask the user which instances to remove:
+    if scale_down:
+        print "Which instances do you want to remove?"
+    else:
+        print "Which instances do you want to rollover?"
+
+    for x, instance in enumerate(sorted(ecs_instances)):
+        print "%d\t - %s" % (x, instance)
+    selections = raw_input('Specify the indices - comma-separated (ex. "1,2,4") or inclusive range (ex. "7-11"): ').split(',')
+    selected_instances = []
+    for selection in selections:
+        if '-' in selection:
+            start, end = selection.split('-')
+            start = int(start)
+            end = int(end)
+            selected_instances += ecs_instances[start:end+1]
+        else:
+            index = int(selection)
+            selected_instances.append(ecs_instances[index])
 
     # remove the selected instances to determine the remaining AZ balance
     to_remove = {}
-    for ec2_id, desc in instance_descriptions.items():
-        if ec2_id in asg_instances_to_zones:
-            del asg_instances_to_zones[ec2_id]
+    for ecs_instance in selected_instances:
+        if ecs_instance.ec2_id in asg_contents:
+            del asg_contents[ecs_instance.ec2_id]
         else:
-            print "WARNING: %s is not in the AutoScalingGroup. It will not be replaced" % (ec2_id)
+            print "WARNING: %s is not in the AutoScalingGroup. It will not be replaced" % (ecs_instance.ec2_id)
 
-        az = desc['Placement']['AvailabilityZone']
-        to_remove.setdefault(az, [])
-        to_remove[az].append(ec2_id)
+        to_remove.setdefault(ecs_instance.availability_zone, [])
+        to_remove[ecs_instance.availability_zone].append(ecs_instance)
 
-    # check az balance
+    #
+    # check the Availability Zone balance
+    #
+    az_balance = {}
+    for k, v in asg_contents.iteritems():
+        az_balance.setdefault(v, []).append(k)
+
     max_diff = 0
-    for a, b in itertools.combinations(to_remove.keys(), 2):
-        max_diff = max(max_diff, abs(len(to_remove[a]) - len(to_remove[b])))
+    for a, b in itertools.combinations(az_balance.keys(), 2):
+        max_diff = max(max_diff, abs(len(az_balance[a]) - len(az_balance[b])))
 
     remaining = sum([len(i) for i in to_remove.values()])
     ordered_instances = []
@@ -62,9 +115,9 @@ def sort_and_check_availability_zones(instance_descriptions, instances_in_asg):
 
     print "About to remove the following instances:"
     for instance in ordered_instances:
-        print "%s - %s" % (instance, instance_descriptions[instance]['Placement']['AvailabilityZone'])
+        print instance
 
-    asg_zones = set([az for az in asg_instances_to_zones.values()])
+    asg_zones = set([az for az in asg_contents.values()])
     if max_diff > 1 or len(asg_zones) == 1:
         print "WARNING: The instances you selected will cause the auto scaling" \
               " group to rebalance instances across availability zones. This" \
@@ -75,47 +128,6 @@ def sort_and_check_availability_zones(instance_descriptions, instances_in_asg):
         return []
 
     return ordered_instances
-
-
-def prompt_for_instances(instances, scale_down=False):
-    """
-    Ask the user to confirm the instances to remove
-    @param instances: list of ecs instance ids
-    @param scale_down: bool if scale down or rollover
-    @return: list of instance ids, empty list means user backed out
-    """
-    if scale_down:
-        print "Which instances do you want to remove?"
-    else:
-        print "Which instances do you want to rollover?"
-
-    for x, instance in enumerate(sorted(instances)):
-        print "%d\t - %s" % (x, instance)
-    selections = raw_input('Specify the indices - comma-separated (ex. "1,2,4") or inclusive range (ex. "7-11"): ').split(',')
-
-    selected_instances = []
-    for selection in selections:
-        if '-' in selection:
-            start, end = selection.split('-')
-            start = int(start)
-            end = int(end)
-            selected_instances += instances[start:end+1]
-        else:
-            index = int(selection)
-            selected_instances.append(instances[index])
-
-    # confirm selection
-    if scale_down:
-        print "You selected the following instances to remove:"
-    else:
-        print "You selected the following instances to rollover:"
-
-    for instance in selected_instances:
-        print instance
-    confirm = raw_input("Is this correct [y/N]? ")
-    if confirm.lower() != 'y':
-        return []
-    return selected_instances
 
 
 def map_service_events(service_descriptions):
@@ -183,50 +195,45 @@ def main_rollover(args):
     ec2_client = ec2.EC2Client()
     asg = scaling.AutoScalingGroup(args.asg)
 
-    # Prompt the user for the instances to adjust
-    cluster_instances = ecs_client.list_container_instances()
-    selected_instances = prompt_for_instances(cluster_instances,
-                                              args.scale_down)
-    if not selected_instances:
-        return
+    # get all the ecs instances and their necessary metadata
+    all_ecs_instances = []
+    for instance in ecs_client.list_container_instances():
+        ecs_instance = ECSInstance(ecs_client, ec2_client, instance)
+        all_ecs_instances.append(ecs_instance)
 
-    #
-    # learn about and sort the instances by availability zone
-    #
-    ecs_descriptions = ecs_client.describe_instances(selected_instances)
-    ec2_to_ecs_id = dict([(v['ec2InstanceId'], k) for k, v in ecs_descriptions.items()])
-    ec2_ids = ec2_to_ecs_id.keys()
-    ec2_descriptions = ec2_client.describe_instances(ec2_ids)
-
-    # sort and warn by availability zones
+    # get all the ec2 instances in the ASG and their availability zones
     asg_instances = asg.describe_instances()
-    sorted_ec2_ids = sort_and_check_availability_zones(ec2_descriptions,
-                                                       asg_instances)
-    if not sorted_ec2_ids:
+    asg_contents = {}
+    for asg_instance in asg_instances:
+        ec2_id = asg_instance['InstanceId']
+        asg_contents[ec2_id] = asg_instance['AvailabilityZone']
+
+    # Prompt the user for the instances to adjust
+    selected_ecs_instances = prompt_for_instances(all_ecs_instances,
+                                                  asg_contents,
+                                                  args.scale_down)
+    if not selected_ecs_instances:
         return
 
     #
     # Iterate through each instance
     #
-    asg_ids = [asg_instance['InstanceId'] for asg_instance in asg_instances]
-    sorted_asg_ids = [ec2_id for ec2_id in sorted_ec2_ids if ec2_id in asg_ids]
-    for ec2_id in sorted_asg_ids:
-        ecs_id = ec2_to_ecs_id[ec2_id]
-        print "Preparing to remove %s (%s)" % (ecs_id, ec2_id)
+    for ecs_instance in selected_ecs_instances:
+        print "Preparing to remove %s" % (ecs_instance)
 
         #
         # Remove ECS instance from scaling group
         #
         if args.scale_down:
-            sys.stdout.write("Remove EC2 instance %s from scaling group..." % (ec2_id))
+            sys.stdout.write("Remove EC2 instance from scaling group...")
         else:
-            sys.stdout.write("Removing EC2 instance %s from scaling group and waiting for replacement..." % (ec2_id))
+            sys.stdout.write("Removing EC2 instance from scaling group and waiting for replacement...")
         sys.stdout.flush()
         if not args.dry_run:
             if args.scale_down:
-                asg.detach_instances([ec2_id], scale_down=True)
+                asg.detach_instances([ecs_instance.ec2_id], scale_down=True)
             else:
-                asg.detach_instances_and_wait([ec2_id])
+                asg.detach_instances_and_wait([ecs_instance.ec2_id])
         print "done"
 
         #
@@ -237,7 +244,7 @@ def main_rollover(args):
             new_ec2_id = get_added_asg_instances(asg_instances,
                                                  new_asg_instances)[0]
             asg_instances = new_asg_instances
-            sys.stdout.write("Waiting for replacement instance %s to join ECS..." % (new_ec2_id))
+            sys.stdout.write("Waiting for replacement EC2 instance %s to join ECS..." % (new_ec2_id))
             sys.stdout.flush()
             while new_ec2_id not in ecs_client.list_active_ec2_instances():
                 time.sleep(10)
@@ -264,18 +271,18 @@ def main_rollover(args):
         #
         # De-register instances from ECS
         #
-        sys.stdout.write("De-registering instance %s from ECS..." % (ecs_id))
+        sys.stdout.write("De-registering instance from ECS...")
         sys.stdout.flush()
         if not args.dry_run:
-            ecs_client.deregister_container_instance(ecs_id)
+            ecs_client.deregister_container_instance(ecs_instance.ecs_id)
         print "done"
 
         #
         # Wait for task migrations
         #
-        services_on_instance = ecs_instance_services.get(ecs_id, [])
+        services_on_instance = ecs_instance_services.get(ecs_instance.ecs_id, [])
         if services_on_instance:
-            sys.stdout.write("Rolling over services from %s ..." % (ecs_id))
+            sys.stdout.write("Rolling over services ...")
             sys.stdout.flush()
             if not args.dry_run:
                 for service_id in services_on_instance:
@@ -292,7 +299,7 @@ def main_rollover(args):
                     service_events[service_id].append(event)
             print "done"
 
-            sys.stdout.write("Removing %s from any service ELBs..." % (ec2_id))
+            sys.stdout.write("Removing instance from any service ELBs...")
             sys.stdout.flush()
             if not args.dry_run:
                 for service_id in services_on_instance:
@@ -301,15 +308,15 @@ def main_rollover(args):
                     service = service_descriptions[service_id]
                     for balancer in service.get('loadBalancers', []):
                         elb_client = elb.ELBClient(balancer['loadBalancerName'])
-                        elb_client.deregister_instances([ec2_id])
+                        elb_client.deregister_instances([ecs_instance.ec2_id])
             print "done"
 
         #
         # stop all the docker containers on the machine
         #
-        sys.stdout.write("Stopping containers on %s ..." % (ec2_id))
+        sys.stdout.write("Stopping containers on instance ...")
         sys.stdout.flush()
-        ip_address = ec2_descriptions[ec2_id]['PrivateIpAddress']
+        ip_address = ecs_instance.ip_address
         if not args.dry_run:
             if not ssh.stop_all_containers(ip_address, args.timeout):
                 print "FAILED"
@@ -319,11 +326,11 @@ def main_rollover(args):
         #
         # Stop and terminate the EC2 instance
         #
-        sys.stdout.write("Stopping and Terminating %s ..." % (ec2_id))
+        sys.stdout.write("Stopping and Terminating instance ...")
         sys.stdout.flush()
         if not args.dry_run:
-            ec2_client.stop_and_wait_for_instances([ec2_id])
-            ec2_client.terminate_and_wait_for_instances([ec2_id])
+            ec2_client.stop_and_wait_for_instances([ecs_instance.ec2_id])
+            ec2_client.terminate_and_wait_for_instances([ecs_instance.ec2_id])
         print "done"
         print
 
@@ -331,6 +338,16 @@ def main_rollover(args):
         print "Scale down complete!"
     else:
         print "Rollover complete!"
+
+
+def main_docker_stop(args):
+    """
+    Main entry point for the docker-stop command
+    """
+    ec2_client = ec2.EC2Client()
+    info = ec2_client.describe_instances([args.ec2_id])
+    return ssh.stop_all_containers(info[args.ec2_id]['PrivateIpAddress'],
+                                   args.timeout)
 
 
 def main():
@@ -393,6 +410,22 @@ def main():
                                    nargs='*',
                                    help="load balancer to detach from. "
                                         "If not provided, all will be queried")
+
+    #
+    # docker-stop args
+    #
+    docker_stop_parser = subparsers.add_parser('docker-stop',
+                                               help="stop docker containers on"
+                                                    " an ec2 instance")
+    docker_stop_parser.set_defaults(func=main_docker_stop)
+
+    docker_stop_parser.add_argument('-t',
+                                    '--timeout',
+                                    type=int,
+                                    default=30,
+                                    help="`docker stop` timeout")
+    docker_stop_parser.add_argument('ec2_id',
+                                    help="EC2 instance id")
 
     #
     # ec2-stop args
