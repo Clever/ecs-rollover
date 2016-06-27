@@ -213,7 +213,19 @@ def main_rollover(args):
                                                   asg_contents,
                                                   args.scale_down)
     if not selected_ecs_instances:
-        return
+        return True
+
+    #
+    # test ssh works before proceeding
+    #
+    sys.stdout.write("Testing ssh ...")
+    sys.stdout.flush()
+    if not ssh.test(selected_ecs_instances[0].ip_address):
+        print "ERROR: Could not ssh into %s " % selected_ecs_instances[0].ec2_id
+        print "You may need to configure your network and/or ssh settings to " \
+              "allow for non-interactive access to your EC2 machines."
+        return False
+    print "done"
 
     #
     # Iterate through each instance
@@ -338,6 +350,7 @@ def main_rollover(args):
         print "Scale down complete!"
     else:
         print "Rollover complete!"
+    return True
 
 
 def main_docker_stop(args):
@@ -348,6 +361,15 @@ def main_docker_stop(args):
     info = ec2_client.describe_instances([args.ec2_id])
     return ssh.stop_all_containers(info[args.ec2_id]['PrivateIpAddress'],
                                    args.timeout)
+
+
+def main_ssh_test(args):
+    """
+    Main entry point for the ssh-test command
+    """
+    ec2_client = ec2.EC2Client()
+    info = ec2_client.describe_instances([args.ec2_id])
+    return ssh.test(info[args.ec2_id]['PrivateIpAddress'])
 
 
 def main():
@@ -449,8 +471,19 @@ def main():
                                       nargs='+',
                                       help="EC2 instance id")
 
+    #
+    # ssh-test args
+    #
+    ssh_test_parser = subparsers.add_parser('ssh-test',
+                                            help="Test connection to ec2 machine")
+    ssh_test_parser.set_defaults(func=main_ssh_test)
+
+    ssh_test_parser.add_argument('ec2_id',
+                                 help="EC2 instance id")
+
     args = parser.parse_args()
-    args.func(args)
+    if not args.func(args):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
