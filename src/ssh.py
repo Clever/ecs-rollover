@@ -31,3 +31,7 @@ def stop_all_containers(address, timeout):
     """
     command = "docker stop -t %d $(docker ps -a -q)" % (timeout)
     return run_command(address, command)
+
+
+def test(address):
+    return run_command(address, '''echo "test"''')
