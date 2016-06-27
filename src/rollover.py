@@ -6,6 +6,7 @@ from operator import itemgetter
 import os
 import sys
 import time
+import math
 
 # local imports
 import ec2
@@ -36,6 +37,36 @@ class ECSInstance(object):
         info = self.ecs_client.describe_instances([self.ecs_id])
         self.ec2_id = info[self.ecs_id]['ec2InstanceId']
 
+        # store resource utilization
+        self.resources = {
+            "cpu": {
+                "registered": -1,
+                "remaining": -1,
+                "utilized": -1,
+            },
+            "memory": {
+                "registered": -1,
+                "remaining": -1,
+                "utilized": -1,
+            },
+        }
+
+        # look up registered and remaining resources
+        for r in info[self.ecs_id]['registeredResources']:
+            if r['name'] == 'CPU':
+                self.resources['cpu']['registered'] = r['integerValue']
+            if r['name'] == 'MEMORY':
+                self.resources['memory']['registered'] = r['integerValue']
+        for r in info[self.ecs_id]['remainingResources']:
+            if r['name'] == 'CPU':
+                self.resources['cpu']['remaining'] = r['integerValue']
+            if r['name'] == 'MEMORY':
+                self.resources['memory']['remaining'] = r['integerValue']
+
+        # compute utilization %
+        self.resources["cpu"]["utilized"] = math.ceil(100 * (1 - float(self.resources["cpu"]["remaining"]) / self.resources["cpu"]["registered"]))
+        self.resources["memory"]["utilized"] = math.ceil(100 * (1 - float(self.resources["memory"]["remaining"]) / self.resources["memory"]["registered"]))
+
     def _populate_ec2_info(self):
         info = self.ec2_client.describe_instances([self.ec2_id])
         self.availability_zone = info[self.ec2_id]['Placement']['AvailabilityZone']
@@ -45,8 +76,7 @@ class ECSInstance(object):
         return cmp(self.ecs_id, other.ecs_id)
 
     def __repr__(self):
-        return "%s (%s - %s)" % (self.ecs_id, self.ec2_id, self.availability_zone)
-
+        return "{} ({} - {}) [{:3.0f}% cpu, {:3.0f}% mem]".format(self.ecs_id, self.ec2_id, self.availability_zone, self.resources["cpu"]["utilized"], self.resources["memory"]["utilized"])
 
 def prompt_for_instances(ecs_instances, asg_contents, scale_down=False):
     """
@@ -63,7 +93,7 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False):
     else:
         print "Which instances do you want to rollover?"
 
-    for x, instance in enumerate(sorted(ecs_instances)):
+    for x, instance in enumerate(sorted(ecs_instances, key=lambda i: i.resources["cpu"]["utilized"] + i.resources["memory"]["utilized"], reverse=True)):
         print "%d\t - %s" % (x, instance)
     selections = raw_input('Specify the indices - comma-separated (ex. "1,2,4") or inclusive range (ex. "7-11"): ').split(',')
     selected_instances = []
