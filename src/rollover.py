@@ -24,6 +24,8 @@ class ECSInstance(object):
       - ec2_id
       - availability_zone
       - ip_address
+      - cpu_utilized (percent)
+      - mem_utilized (percent)
     """
     def __init__(self, ecs_client, ec2_client, ecs_id):
         self.ecs_client = ecs_client
@@ -37,35 +39,25 @@ class ECSInstance(object):
         info = self.ecs_client.describe_instances([self.ecs_id])
         self.ec2_id = info[self.ecs_id]['ec2InstanceId']
 
-        # store resource utilization
-        self.resources = {
-            "cpu": {
-                "registered": -1,
-                "remaining": -1,
-                "utilized": -1,
-            },
-            "memory": {
-                "registered": -1,
-                "remaining": -1,
-                "utilized": -1,
-            },
-        }
-
         # look up registered and remaining resources
+        cpu_registered = -1
+        cpu_remaining = -1
+        mem_registered = -1
+        mem_remaining = -1
         for r in info[self.ecs_id]['registeredResources']:
             if r['name'] == 'CPU':
-                self.resources['cpu']['registered'] = r['integerValue']
+                cpu_registered = r['integerValue']
             if r['name'] == 'MEMORY':
-                self.resources['memory']['registered'] = r['integerValue']
+                mem_registered = r['integerValue']
         for r in info[self.ecs_id]['remainingResources']:
             if r['name'] == 'CPU':
-                self.resources['cpu']['remaining'] = r['integerValue']
+                cpu_remaining = r['integerValue']
             if r['name'] == 'MEMORY':
-                self.resources['memory']['remaining'] = r['integerValue']
+                mem_remaining = r['integerValue']
 
-        # compute utilization %
-        self.resources["cpu"]["utilized"] = math.ceil(100 * (1 - float(self.resources["cpu"]["remaining"]) / self.resources["cpu"]["registered"]))
-        self.resources["memory"]["utilized"] = math.ceil(100 * (1 - float(self.resources["memory"]["remaining"]) / self.resources["memory"]["registered"]))
+        # compute utilization %, rounding up
+        self.cpu_utilized =  math.ceil(100 * (1 - float(cpu_remaining) / cpu_registered))
+        self.mem_utilized = math.ceil(100 * (1 - float(mem_remaining) / mem_registered))
 
     def _populate_ec2_info(self):
         info = self.ec2_client.describe_instances([self.ec2_id])
@@ -76,7 +68,7 @@ class ECSInstance(object):
         return cmp(self.ecs_id, other.ecs_id)
 
     def __repr__(self):
-        return "{} ({} - {}) [{:3.0f}% cpu, {:3.0f}% mem]".format(self.ecs_id, self.ec2_id, self.availability_zone, self.resources["cpu"]["utilized"], self.resources["memory"]["utilized"])
+        return "{} ({} - {}) [{:3.0f}% cpu, {:3.0f}% mem]".format(self.ecs_id, self.ec2_id, self.availability_zone, self.cpu_utilized, self.mem_utilized)
 
 def prompt_for_instances(ecs_instances, asg_contents, scale_down=False):
     """
@@ -93,7 +85,7 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False):
     else:
         print "Which instances do you want to rollover?"
 
-    for x, instance in enumerate(sorted(ecs_instances, key=lambda i: i.resources["cpu"]["utilized"] + i.resources["memory"]["utilized"], reverse=True)):
+    for x, instance in enumerate(sorted(ecs_instances, key=lambda i: i.cpu_utilized + i.mem_utilized, reverse=True)):
         print "%d\t - %s" % (x, instance)
     selections = raw_input('Specify the indices - comma-separated (ex. "1,2,4") or inclusive range (ex. "7-11"): ').split(',')
     selected_instances = []
