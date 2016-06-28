@@ -6,6 +6,7 @@ from operator import itemgetter
 import os
 import sys
 import time
+import math
 
 # local imports
 import ec2
@@ -23,6 +24,9 @@ class ECSInstance(object):
       - ec2_id
       - availability_zone
       - ip_address
+      - cpu_utilized (percent)
+      - mem_utilized (percent)
+      - launch_time
     """
     def __init__(self, ecs_client, ec2_client, ecs_id):
         self.ecs_client = ecs_client
@@ -36,25 +40,46 @@ class ECSInstance(object):
         info = self.ecs_client.describe_instances([self.ecs_id])
         self.ec2_id = info[self.ecs_id]['ec2InstanceId']
 
+        # look up registered and remaining resources
+        cpu_registered = -1
+        cpu_remaining = -1
+        mem_registered = -1
+        mem_remaining = -1
+        for r in info[self.ecs_id]['registeredResources']:
+            if r['name'] == 'CPU':
+                cpu_registered = r['integerValue']
+            if r['name'] == 'MEMORY':
+                mem_registered = r['integerValue']
+        for r in info[self.ecs_id]['remainingResources']:
+            if r['name'] == 'CPU':
+                cpu_remaining = r['integerValue']
+            if r['name'] == 'MEMORY':
+                mem_remaining = r['integerValue']
+
+        # compute utilization %, rounding up
+        self.cpu_utilized =  math.ceil(100 * (1 - float(cpu_remaining) / cpu_registered))
+        self.mem_utilized = math.ceil(100 * (1 - float(mem_remaining) / mem_registered))
+
     def _populate_ec2_info(self):
         info = self.ec2_client.describe_instances([self.ec2_id])
         self.availability_zone = info[self.ec2_id]['Placement']['AvailabilityZone']
         self.ip_address = info[self.ec2_id]['PrivateIpAddress']
+        self.launch_time = info[self.ec2_id]['LaunchTime']
 
     def __cmp__(self, other):
         return cmp(self.ecs_id, other.ecs_id)
 
     def __repr__(self):
-        return "%s (%s - %s)" % (self.ecs_id, self.ec2_id, self.availability_zone)
+        return "{} ({} - {}) [{:3.0f}% cpu, {:3.0f}% mem] -- {}".format(self.ecs_id, self.ec2_id, self.availability_zone, self.cpu_utilized, self.mem_utilized, self.launch_time)
 
-
-def prompt_for_instances(ecs_instances, asg_contents, scale_down=False):
+def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by="launch_time"):
     """
     sorts the instances into an order that tries not to cause an AZ imbalance
     when removing instances. Also, prompts the user if there are issues.
     @param ecs_instances: list of ECSInstance() objects
     @param asg_contents: dictionary of ec2_ids to availability zones in the ASG
     @param scale_down: bool if scale down or rollover
+    @param sort_by: string ("launch_time" or "utilization") for how to sort printed instances
     @return: sorted list of ECSInstance() objects to remove
     """
     # ask the user which instances to remove:
@@ -63,7 +88,13 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False):
     else:
         print "Which instances do you want to rollover?"
 
-    for x, instance in enumerate(sorted(ecs_instances)):
+    # allow sorting by launch_time or utilization
+    sorts = dict(
+        utilization = dict(key=lambda i: i.cpu_utilized + i.mem_utilized, reverse=True),
+        launch_time = dict(key=lambda i: i.launch_time, reverse=False),
+    )
+    sort_type = sorts[sort_by]
+    for x, instance in enumerate(sorted(ecs_instances, key=sort_type["key"], reverse=sort_type["reverse"])):
         print "%d\t - %s" % (x, instance)
     selections = raw_input('Specify the indices - comma-separated (ex. "1,2,4") or inclusive range (ex. "7-11"): ').split(',')
     selected_instances = []
@@ -211,7 +242,8 @@ def main_rollover(args):
     # Prompt the user for the instances to adjust
     selected_ecs_instances = prompt_for_instances(all_ecs_instances,
                                                   asg_contents,
-                                                  args.scale_down)
+                                                  args.scale_down,
+                                                  args.sort)
     if not selected_ecs_instances:
         return True
 
@@ -388,6 +420,12 @@ def main():
                                  type=int,
                                  default=30,
                                  help="`docker stop` timeout")
+    rollover_parser.add_argument('-s',
+                                 '--sort',
+                                 choices=['launch_time', 'utilization'],
+                                 default="launch_time",
+                                 help="sorts instances by 'launch_time' or 'utilization'. "
+                                        "If not provided, defaults to 'launch_time'")
     rollover_parser.add_argument('--dry-run',
                                  action="store_true",
                                  default=False,
@@ -409,6 +447,12 @@ def main():
                                   type=int,
                                   default=30,
                                   help="`docker stop` timeout")
+    scaledown_parser.add_argument('-s',
+                                 '--sort',
+                                 choices=['launch_time', 'utilization'],
+                                 default="launch_time",
+                                 help="sorts instances by 'launch_time' or 'utilization'. "
+                                        "If not provided, defaults to 'launch_time'")
     scaledown_parser.add_argument('--dry-run',
                                   action="store_true",
                                   default=False,
