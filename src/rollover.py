@@ -93,7 +93,7 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by=
         utilization = dict(key=lambda i: i.cpu_utilized + i.mem_utilized, reverse=True),
         launch_time = dict(key=lambda i: i.launch_time, reverse=False),
     )
-    sort_type = sorts["utilization"] if sort_by.startswith("util") else sorts["launch_time"]
+    sort_type = sorts[sort_by]
     for x, instance in enumerate(sorted(ecs_instances, key=sort_type["key"], reverse=sort_type["reverse"])):
         print "%d\t - %s" % (x, instance)
     selections = raw_input('Specify the indices - comma-separated (ex. "1,2,4") or inclusive range (ex. "7-11"): ').split(',')
@@ -422,7 +422,7 @@ def main():
                                  help="`docker stop` timeout")
     rollover_parser.add_argument('-s',
                                  '--sort',
-                                 type=str,
+                                 choices=['launch_time', 'utilization'],
                                  default="launch_time",
                                  help="sorts instances by 'launch_time' or 'utilization'. "
                                         "If not provided, defaults to 'launch_time'")
@@ -449,7 +449,7 @@ def main():
                                   help="`docker stop` timeout")
     scaledown_parser.add_argument('-s',
                                  '--sort',
-                                 type=str,
+                                 choices=['launch_time', 'utilization'],
                                  default="launch_time",
                                  help="sorts instances by 'launch_time' or 'utilization'. "
                                         "If not provided, defaults to 'launch_time'")
