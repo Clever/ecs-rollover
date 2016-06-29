@@ -57,7 +57,7 @@ class ECSInstance(object):
                 mem_remaining = r['integerValue']
 
         # compute utilization %, rounding up
-        self.cpu_utilized =  math.ceil(100 * (1 - float(cpu_remaining) / cpu_registered))
+        self.cpu_utilized = math.ceil(100 * (1 - float(cpu_remaining) / cpu_registered))
         self.mem_utilized = math.ceil(100 * (1 - float(mem_remaining) / mem_registered))
 
     def _populate_ec2_info(self):
@@ -71,6 +71,7 @@ class ECSInstance(object):
 
     def __repr__(self):
         return "{} ({} - {}) [{:3.0f}% cpu, {:3.0f}% mem] -- {}".format(self.ecs_id, self.ec2_id, self.availability_zone, self.cpu_utilized, self.mem_utilized, self.launch_time)
+
 
 def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by="launch_time"):
     """
@@ -90,8 +91,8 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by=
 
     # allow sorting by launch_time or utilization
     sorts = dict(
-        utilization = dict(key=lambda i: i.cpu_utilized + i.mem_utilized, reverse=True),
-        launch_time = dict(key=lambda i: i.launch_time, reverse=False),
+        utilization=dict(key=lambda i: i.cpu_utilized + i.mem_utilized, reverse=True),
+        launch_time=dict(key=lambda i: i.launch_time, reverse=False),
     )
     sort_type = sorts[sort_by]
     for x, instance in enumerate(sorted(ecs_instances, key=sort_type["key"], reverse=sort_type["reverse"])):
@@ -118,6 +119,11 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by=
 
         to_remove.setdefault(ecs_instance.availability_zone, [])
         to_remove[ecs_instance.availability_zone].append(ecs_instance)
+
+    remaining_instances = []
+    for ecs_instance in ecs_instances:
+        if ecs_instance.ec2_id in asg_contents:
+            remaining_instances.append(ecs_instance)
 
     #
     # check the Availability Zone balance
@@ -156,9 +162,9 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by=
 
     confirm = raw_input("Do you want to continue [y/N]? ")
     if confirm.lower() != 'y':
-        return []
+        return [], remaining_instances
 
-    return ordered_instances
+    return ordered_instances, remaining_instances
 
 
 def map_service_events(service_descriptions):
@@ -240,12 +246,27 @@ def main_rollover(args):
         asg_contents[ec2_id] = asg_instance['AvailabilityZone']
 
     # Prompt the user for the instances to adjust
-    selected_ecs_instances = prompt_for_instances(all_ecs_instances,
-                                                  asg_contents,
-                                                  args.scale_down,
-                                                  args.sort)
+    selected_ecs_instances, remaining_instances = prompt_for_instances(all_ecs_instances,
+                                                                       asg_contents,
+                                                                       args.scale_down,
+                                                                       args.sort)
     if not selected_ecs_instances:
         return True
+
+    #
+    # Verify that Cluster size is >= largest service count
+    #
+    service_ids = ecs_client.list_services()
+    if args.scale_down and service_ids:
+        service_descriptions = ecs_client.describe_services(service_ids)
+        counts_to_service = {}
+        for service in service_descriptions.values():
+            counts_to_service.setdefault(service['desiredCount'], []).append(service['serviceName'])
+
+        max_count = sorted(counts_to_service.keys(), reverse=True)[0]
+        if max_count > len(remaining_instances):
+            print "ERROR: New cluster size (%d) is smaller than largest services: %s (%d)" % (len(remaining_instances), ", ".join(counts_to_service[max_count]), max_count)
+            return False
 
     #
     # test ssh works before proceeding
@@ -334,8 +355,10 @@ def main_rollover(args):
                     completed, event = ecs_client.wait_for_service_steady_state(service_id,
                                                                                 last_event)
                     if not completed:
-                        print "TIMEOUT"
-                        print "Timeout hit while waiting for %s to reach steady state" % (service_id)
+                        service = service_descriptions[service_id]
+                        service_name = service['serviceName']
+                        print "ERROR: Timeout hit while waiting for %s to reach steady state" % (service_name)
+                        return False
 
                     # push the new event into the list for that service so
                     # that the next instance doesn't confuse this event for
