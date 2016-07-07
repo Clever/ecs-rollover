@@ -95,7 +95,8 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by=
         launch_time=dict(key=lambda i: i.launch_time, reverse=False),
     )
     sort_type = sorts[sort_by]
-    for x, instance in enumerate(sorted(ecs_instances, key=sort_type["key"], reverse=sort_type["reverse"])):
+    ecs_instances.sort(key=sort_type["key"], reverse=sort_type["reverse"])
+    for x, instance in enumerate(ecs_instances):
         print "%d\t - %s" % (x, instance)
     selections = raw_input('Specify the indices - comma-separated (ex. "1,2,4") or inclusive range (ex. "7-11"): ').split(',')
     selected_instances = []
