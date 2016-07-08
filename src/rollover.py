@@ -17,6 +17,9 @@ import ssh
 import utils
 
 
+SERVICE_ACTIVE = "ACTIVE"
+
+
 class ECSInstance(object):
     """
     properties:
@@ -261,11 +264,23 @@ def main_rollover(args):
         return True
 
     #
-    # Verify that Cluster size is >= largest service count
+    # Verify that Cluster services are healthy first
     #
     service_ids = ecs_client.list_services()
+    service_descriptions = ecs_client.describe_services(service_ids)
+    service_issues = []
+    for service in service_descriptions.values():
+        if service['status'] != SERVICE_ACTIVE:
+            serivce_issues.append(service['serviceName'])
+
+    if service_issues:
+        print "ERROR: Not all services are active: %s" % ", ".join(service_issues)
+        return False
+
+    #
+    # Verify that Cluster size is >= largest service count
+    #
     if args.scale_down and service_ids:
-        service_descriptions = ecs_client.describe_services(service_ids)
         counts_to_service = {}
         for service in service_descriptions.values():
             counts_to_service.setdefault(service['desiredCount'], []).append(service['serviceName'])
