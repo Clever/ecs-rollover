@@ -17,6 +17,9 @@ import ssh
 import utils
 
 
+SERVICE_ACTIVE = "ACTIVE"
+
+
 class ECSInstance(object):
     """
     properties:
@@ -162,10 +165,10 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by=
         print instance
 
     asg_zones = set([az for az in asg_contents.values()])
-    if max_diff > 1 or len(asg_zones) == 1:
+    if scale_down and max_diff > 1 or len(asg_zones) == 1:
         print "WARNING: The instances you selected will cause the auto scaling" \
               " group to rebalance instances across availability zones. This" \
-              " will result in a destructive operation."
+              " may result in a destructive operation."
 
     confirm = raw_input("Do you want to continue [y/N]? ")
     if confirm.lower() != 'y':
@@ -261,11 +264,23 @@ def main_rollover(args):
         return True
 
     #
-    # Verify that Cluster size is >= largest service count
+    # Verify that Cluster services are healthy first
     #
     service_ids = ecs_client.list_services()
+    service_descriptions = ecs_client.describe_services(service_ids)
+    service_issues = []
+    for service in service_descriptions.values():
+        if service['status'] != SERVICE_ACTIVE:
+            serivce_issues.append(service['serviceName'])
+
+    if service_issues:
+        print "ERROR: Not all services are active: %s" % ", ".join(service_issues)
+        return False
+
+    #
+    # Verify that Cluster size is >= largest service count
+    #
     if args.scale_down and service_ids:
-        service_descriptions = ecs_client.describe_services(service_ids)
         counts_to_service = {}
         for service in service_descriptions.values():
             counts_to_service.setdefault(service['desiredCount'], []).append(service['serviceName'])
