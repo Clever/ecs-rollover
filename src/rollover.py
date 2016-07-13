@@ -165,10 +165,10 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by=
         print instance
 
     asg_zones = set([az for az in asg_contents.values()])
-    if max_diff > 1 or len(asg_zones) == 1:
+    if scale_down and max_diff > 1 or len(asg_zones) == 1:
         print "WARNING: The instances you selected will cause the auto scaling" \
               " group to rebalance instances across availability zones. This" \
-              " will result in a destructive operation."
+              " may result in a destructive operation."
 
     confirm = raw_input("Do you want to continue [y/N]? ")
     if confirm.lower() != 'y':
