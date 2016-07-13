@@ -83,6 +83,8 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by=
     @param sort_by: string ("launch_time" or "utilization") for how to sort printed instances
     @return: sorted list of ECSInstance() objects to remove
     """
+    all_azs = set([az for az in asg_contents.values()])
+
     # ask the user which instances to remove:
     if scale_down:
         print "Which instances do you want to remove?"
@@ -95,7 +97,8 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by=
         launch_time=dict(key=lambda i: i.launch_time, reverse=False),
     )
     sort_type = sorts[sort_by]
-    for x, instance in enumerate(sorted(ecs_instances, key=sort_type["key"], reverse=sort_type["reverse"])):
+    ecs_instances.sort(key=sort_type["key"], reverse=sort_type["reverse"])
+    for x, instance in enumerate(ecs_instances):
         print "%d\t - %s" % (x, instance)
     selections = raw_input('Specify the indices - comma-separated (ex. "1,2,4") or inclusive range (ex. "7-11"): ').split(',')
     selected_instances = []
@@ -120,10 +123,11 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by=
         to_remove.setdefault(ecs_instance.availability_zone, [])
         to_remove[ecs_instance.availability_zone].append(ecs_instance)
 
-    remaining_instances = []
+    remaining_instances_by_az = {}
     for ecs_instance in ecs_instances:
         if ecs_instance.ec2_id in asg_contents:
-            remaining_instances.append(ecs_instance)
+            remaining_instances_by_az.setdefault(ecs_instance.availability_zone, []).append(ecs_instance)
+    remaining_instances = [i for sublist in remaining_instances_by_az.values() for i in sublist]
 
     #
     # check the Availability Zone balance
@@ -139,12 +143,15 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by=
     remaining = sum([len(i) for i in to_remove.values()])
     ordered_instances = []
     # order by zone with the most instances first
-    zone_counts = sorted(to_remove.items(),
+    for az in all_azs:
+        remaining_instances_by_az.setdefault(az, [])
+
+    zone_counts = sorted(remaining_instances_by_az.items(),
                          key=itemgetter(1),
                          cmp=lambda a, b: cmp(len(a), len(b)),
                          reverse=True)
     for az in itertools.cycle([z[0] for z in zone_counts]):
-        if to_remove[az]:
+        if to_remove.get(az, []):
             ordered_instances.append(to_remove[az].pop(0))
             remaining -= 1
         if remaining == 0:
