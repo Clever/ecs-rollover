@@ -14,7 +14,7 @@ def run_command(address, command):
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
-        ssh.connect(address, username="ec2-user")
+        ssh.connect(address, username="ec2-user", timeout=10)
         ssh_in, ssh_out, ssh_err = ssh.exec_command(command)
         exit_status = ssh_out.channel.recv_exit_status()
         return exit_status == 0
@@ -31,6 +31,16 @@ def stop_all_containers(address, timeout):
     """
     command = "docker stop -t %d $(docker ps -a -q)" % (timeout)
     return run_command(address, command)
+
+
+def test_docker(address):
+    """
+    Test that docker is functional on the remote machine
+    @param address: ip address of remote machine
+    @return: True if docker is working
+    """
+    preflight = "timeout 10 docker ps -a -q"
+    return run_command(address, preflight)
 
 
 def test(address):
