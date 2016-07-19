@@ -210,7 +210,8 @@ def map_instance_services(service_descriptions, task_descriptions):
             # only look at tasks with services (ignore instance startup tasks)
             ecs_id = utils.pull_instance_id(task['containerInstanceArn'])
             instance_services.setdefault(ecs_id, [])
-            instance_services[ecs_id].append(defs_to_services[def_arn])
+            if defs_to_services[def_arn] not in instance_services[ecs_id]:
+                instance_services[ecs_id].append(defs_to_services[def_arn])
 
     return instance_services
 
@@ -384,7 +385,7 @@ def main_rollover(args):
         #
         # De-register instances from ECS
         #
-        sys.stdout.write("De-registering instance from ECS...")
+        sys.stdout.write("De-registering instance from ECS ...")
         sys.stdout.flush()
         if not args.dry_run:
             ecs_client.deregister_container_instance(ecs_instance.ecs_id)
@@ -406,7 +407,7 @@ def main_rollover(args):
                     break
             print "done"
 
-            sys.stdout.write("Removing instance from any service ELBs...")
+            sys.stdout.write("Removing instance from any service ELBs ...")
             sys.stdout.flush()
             if not args.dry_run:
                 for service_id in services_on_instance:
