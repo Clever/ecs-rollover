@@ -210,7 +210,8 @@ def map_instance_services(service_descriptions, task_descriptions):
             # only look at tasks with services (ignore instance startup tasks)
             ecs_id = utils.pull_instance_id(task['containerInstanceArn'])
             instance_services.setdefault(ecs_id, [])
-            instance_services[ecs_id].append(defs_to_services[def_arn])
+            if defs_to_services[def_arn] not in instance_services[ecs_id]:
+                instance_services[ecs_id].append(defs_to_services[def_arn])
 
     return instance_services
 
@@ -225,6 +226,30 @@ def get_added_asg_instances(old_instances, new_instances):
     old_ids = [i['InstanceId'] for i in old_instances]
     new_ids = [i['InstanceId'] for i in new_instances]
     return [i for i in new_ids if i not in old_ids]
+
+
+def wait_for_all_services(ecs_client, services_on_instance, service_events):
+    """
+    Wait for all services on an instance to reach steady state
+    @param ecs_client: ecs client object
+    @param services_on_instance: list of service ids
+    @param service_events: map of services to lists of events
+    @return: bool if successful
+    """
+    for service_id in services_on_instance:
+        last_event = service_events[service_id][-1]
+        completed, event = ecs_client.wait_for_service_steady_state(service_id,
+                                                                    last_event)
+        # push the new event into the list for that service so
+        # that the next instance doesn't confuse this event for
+        # its own
+        service_events[service_id].append(event)
+
+        if not completed:
+            service = service_descriptions[service_id]
+            print "ERROR: Timeout while waiting for %s to reach steady state" % (service['serviceName'])
+            return False
+    return True
 
 
 def main_rollover(args):
@@ -305,6 +330,8 @@ def main_rollover(args):
     #
     # Iterate through each instance
     #
+    skipped_shutdown = []
+    return_value = True
     for ecs_instance in selected_ecs_instances:
         print "Preparing to remove %s" % (ecs_instance)
 
@@ -358,7 +385,7 @@ def main_rollover(args):
         #
         # De-register instances from ECS
         #
-        sys.stdout.write("De-registering instance from ECS...")
+        sys.stdout.write("De-registering instance from ECS ...")
         sys.stdout.flush()
         if not args.dry_run:
             ecs_client.deregister_container_instance(ecs_instance.ecs_id)
@@ -372,23 +399,15 @@ def main_rollover(args):
             sys.stdout.write("Rolling over services ...")
             sys.stdout.flush()
             if not args.dry_run:
-                for service_id in services_on_instance:
-                    last_event = service_events[service_id][-1]
-                    completed, event = ecs_client.wait_for_service_steady_state(service_id,
-                                                                                last_event)
-                    if not completed:
-                        service = service_descriptions[service_id]
-                        service_name = service['serviceName']
-                        print "ERROR: Timeout hit while waiting for %s to reach steady state" % (service_name)
-                        return False
-
-                    # push the new event into the list for that service so
-                    # that the next instance doesn't confuse this event for
-                    # its own
-                    service_events[service_id].append(event)
+                services_ready = wait_for_all_services(ecs_client,
+                                                       services_on_instance,
+                                                       service_events)
+                if not services_ready:
+                    return_value = False
+                    break
             print "done"
 
-            sys.stdout.write("Removing instance from any service ELBs...")
+            sys.stdout.write("Removing instance from any service ELBs ...")
             sys.stdout.flush()
             if not args.dry_run:
                 for service_id in services_on_instance:
@@ -407,6 +426,11 @@ def main_rollover(args):
         sys.stdout.flush()
         ip_address = ecs_instance.ip_address
         if not args.dry_run:
+            if not ssh.test_docker(ip_address):
+                print "FAILED to run `docker ps`. Skipping shutdown for %s" % (ecs_instance)
+                skipped_shutdown.append(ecs_instance)
+                continue
+
             if not ssh.stop_all_containers(ip_address, args.timeout):
                 print "FAILED"
                 print "WARNING: Failed to stop all containers"
@@ -423,11 +447,21 @@ def main_rollover(args):
         print "done"
         print
 
-    if args.scale_down:
+    # Print the instances that need to be manually shutdown
+    if skipped_shutdown:
+        print "#"*80
+        print "The following instances could not be shutdown."
+        print "They likely still have tasks running on them:"
+        for instance in skipped_shutdown:
+            print instance
+
+    if not return_value:
+        print "NOTE: Some errors were encountered."
+    elif args.scale_down:
         print "Scale down complete!"
     else:
         print "Rollover complete!"
-    return True
+    return return_value
 
 
 def main_docker_stop(args):
