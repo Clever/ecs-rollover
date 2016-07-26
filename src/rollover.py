@@ -234,8 +234,9 @@ def wait_for_all_services(ecs_client, services_on_instance, service_events):
     @param ecs_client: ecs client object
     @param services_on_instance: list of service ids
     @param service_events: map of services to lists of events
-    @return: bool if successful
+    @return: list of service_ids that never completed
     """
+    failed = []
     for service_id in services_on_instance:
         last_event = service_events[service_id][-1]
         completed, event = ecs_client.wait_for_service_steady_state(service_id,
@@ -246,10 +247,8 @@ def wait_for_all_services(ecs_client, services_on_instance, service_events):
         service_events[service_id].append(event)
 
         if not completed:
-            service = service_descriptions[service_id]
-            print "ERROR: Timeout while waiting for %s to reach steady state" % (service['serviceName'])
-            return False
-    return True
+            failed.append(service_id)
+    return failed
 
 
 def main_rollover(args):
@@ -399,11 +398,13 @@ def main_rollover(args):
             sys.stdout.write("Rolling over services ...")
             sys.stdout.flush()
             if not args.dry_run:
-                services_ready = wait_for_all_services(ecs_client,
-                                                       services_on_instance,
-                                                       service_events)
-                if not services_ready:
+                failed_services = wait_for_all_services(ecs_client,
+                                                        services_on_instance,
+                                                        service_events)
+                if failed_services:
                     return_value = False
+                    service_names = [service_descriptions[sid]['serviceName'] for sid in failed_services]
+                    print "ERROR: Timeout while waiting for %s to reach steady state" % (service_names)
                     break
             print "done"
 
