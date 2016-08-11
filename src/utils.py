@@ -30,3 +30,10 @@ def pull_service_id(arn):
     pulls the ecs service id from the full arn
     """
     return arn.split('service/', 1)[-1]
+
+
+def pull_task_definition_name(arn):
+    """
+    pulls the ecs task definition name from the full arn
+    """
+    return arn.split('task-definition/', 1)[-1]

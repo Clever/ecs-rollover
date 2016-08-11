@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 
 import argparse
+import fnmatch
 import itertools
 from operator import itemgetter
 import os
@@ -251,6 +252,26 @@ def wait_for_all_services(ecs_client, services_on_instance, service_events):
     return failed
 
 
+def get_matching_tasks_by_hosts(ecs_client, ec2_client, match_expr):
+    """
+    Get all the ECS instances that are running tasks that match the match_expr
+    @param ecs_client: ecs client object
+    @param ec2_client: ec2 client object
+    @param match_expr: string to match task definitions against
+    @return: dictionary of all ecs_ids to list of matching task definitions
+    """
+    task_ids = ecs_client.list_tasks()
+    task_descriptions = ecs_client.describe_tasks(task_ids)
+    running_map = {}
+    for task in task_descriptions.values():
+        task_def = utils.pull_task_definition_name(task['taskDefinitionArn'])
+        ecs_id = utils.pull_instance_id(task['containerInstanceArn'])
+        running_map.setdefault(ecs_id, [])
+        if fnmatch.fnmatch(task_def, match_expr):
+            running_map[ecs_id].append(task_def)
+    return running_map
+
+
 def main_rollover(args):
     """
     Main entry point for rollover and scaledown commands
@@ -484,6 +505,48 @@ def main_ssh_test(args):
     return ssh.test(info[args.ec2_id]['PrivateIpAddress'])
 
 
+def main_check_for_task(args):
+    sys.stdout.write("Querying ECS ...")
+    sys.stdout.flush()
+
+    ecs_client = ecs.ECSClient(args.cluster)
+    ec2_client = ec2.EC2Client()
+    instance_map = {}
+    for instance in ecs_client.list_container_instances():
+        ecs_instance = ECSInstance(ecs_client, ec2_client, instance)
+        instance_map[ecs_instance.ecs_id] = ecs_instance
+
+    running_map = get_matching_tasks_by_hosts(ecs_client,
+                                              ec2_client,
+                                              args.task_name_expr)
+    print "Done"
+
+    for ecs_id in sorted(running_map):
+        running_task_defs = running_map[ecs_id]
+        instance = instance_map[ecs_id]
+
+        if args.invert_match and not running_task_defs:
+            print "%s (%s, %12s) - NO MATCH" % (ecs_id,
+                                                instance.ec2_id,
+                                                instance.ip_address)
+        elif not args.invert_match and running_task_defs:
+            print "%s (%s, %12s) - RUNNING %s" % (ecs_id,
+                                                  instance.ec2_id,
+                                                  instance.ip_address,
+                                                  ", ".join(running_task_defs))
+
+    matched = sum([1 if defs else 0 for defs in running_map.values()])
+    if args.invert_match:
+        no_match = len(instance_map) - matched
+        print "%d of %d hosts do NOT match the pattern `%s`" % (no_match,
+                                                                len(instance_map),
+                                                                args.task_name_expr)
+    else:
+        print "%d of %d hosts have running tasks that matched the pattern `%s`" % (matched,
+                                                                                   len(instance_map),
+                                                                                   args.task_name_expr)
+
+
 def main():
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers()
@@ -604,6 +667,23 @@ def main():
 
     ssh_test_parser.add_argument('ec2_id',
                                  help="EC2 instance id")
+
+    #
+    # check for a task
+    #
+    check_task_parser = subparsers.add_parser('check-task',
+                                              help="return a list of ECS instances running the given task")
+    check_task_parser.set_defaults(func=main_check_for_task)
+
+    check_task_parser.add_argument('-v',
+                                   '--invert-match',
+                                   action="store_true",
+                                   default=False,
+                                   help="Print the ECS instances NOT running the task")
+    check_task_parser.add_argument('cluster',
+                                   help="fully qualified name of the cluster")
+    check_task_parser.add_argument('task_name_expr',
+                                   help="task definition name (wildcards accepted)")
 
     args = parser.parse_args()
     if not args.func(args):
