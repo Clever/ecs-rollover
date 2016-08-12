@@ -36,6 +36,13 @@ You will need to set 3 AWS environment variables to run this script:
   - `AWS_ACCESS_KEY_ID`
   - `AWS_SECRET_ACCESS_KEY`
   - `AWS_REGION`
+  - `SSH_AUTH_SOCK`
+    - If this envvar doesn't exist try running:
+    ```bash
+    eval `ssh-agent -s`
+    ssh-add ~/.ssh/id_rsa
+    ssh-add ~/.ssh/clever.pem
+    ```
 
 
 ## rollover.sh
@@ -77,3 +84,13 @@ The ec2-terminate command allows you to terminate ec2 instances:
 ```
 ./rollover.sh ec2-terminate ec2_id [ec2_id ...]
 ```
+
+### check-task
+
+The check-task command allows you to audit ec2 instances to make sure they're all running the correct commands:
+
+```
+./rollover check-task --invert-match <cluster name> *ecs-logparser*
+```
+
+(example taken from [ecs-logparser ops guide](https://clever.atlassian.net/wiki/display/ENG/ecs-logparser+ops+guide))
