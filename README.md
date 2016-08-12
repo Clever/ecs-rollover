@@ -36,6 +36,13 @@ You will need to set 3 AWS environment variables to run this script:
   - `AWS_ACCESS_KEY_ID`
   - `AWS_SECRET_ACCESS_KEY`
   - `AWS_REGION`
+  - `SSH_AUTH_SOCK`
+    - If this envvar doesn't exist try running:
+    ```bash
+    eval `ssh-agent -s`
+    ssh-add ~/.ssh/id_rsa
+    ssh-add ~/.ssh/clever.pem
+    ```
 
 
 ## rollover.sh
