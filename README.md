@@ -77,3 +77,13 @@ The ec2-terminate command allows you to terminate ec2 instances:
 ```
 ./rollover.sh ec2-terminate ec2_id [ec2_id ...]
 ```
+
+### check-task
+
+The check-task command allows you to audit ec2 instances to make sure they're all running the correct commands:
+
+```
+./rollover check-task --invert-match <cluster name> *ecs-logparser*
+```
+
+(example taken from [ecs-logparser ops guide](https://clever.atlassian.net/wiki/display/ENG/ecs-logparser+ops+guide))
