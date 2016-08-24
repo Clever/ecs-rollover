@@ -499,13 +499,26 @@ def run_with_timeout(instance_id, command, timeout):
     )
 
     # Error sending response
-    if response.get('ResponseMetadata', {}).get('HttpStatusCode') is not 200:
+    if response.get('ResponseMetadata', {}).get('HTTPStatusCode') is not 200:
+        print "ERROR sending command:", response
         return False
 
-    # To get the command output
-    output = response.get('CommandInvocations')[0].get('CommandPlugins')[0].get('Output')
+    command_id = response.get('Command').get('CommandId')
 
-    return response.get('CommandInvocations')[0].get('CommandPlugins')[0].get('ResponseCode') == 0
+    # Not sure when/if this actually happens; adding as a safeguard for now.
+    if not command_id:
+        return False
+
+    invocation_response = client.list_command_invocations(CommandId=command_id, InstanceId=instance_id, Details=True)
+    # Wait until command reaches final state
+    while invocation_response.get('Status') in ['Pending', 'InProgress', 'Cancelling']:
+        time.sleep(2)
+        invocation_response = client.list_command_invocations(CommandId=command_id, InstanceId=instance_id, Details=True)
+
+    # To get the command output
+    output = invocation_response.get('CommandInvocations')[0].get('CommandPlugins')[0].get('Output')
+
+    return invocation_response.get('CommandInvocations')[0].get('CommandPlugins')[0].get('ResponseCode') == 0
 
 def main_docker_stop(args):
     """
