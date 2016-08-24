@@ -1,6 +1,6 @@
 # ecs-rollover
 
-This script is used to safely rollover or scale down ECS nodes. 
+This script is used to safely rollover or scale down ECS nodes.
 
 **NOTE:** This script assumes all _tasks_ that need to be migrated belong to a _service_.
 
@@ -20,7 +20,7 @@ This script is used to safely rollover or scale down ECS nodes.
   3. De-registers the instance and waits for it to be inactive
   4. Wait for tasks to be rescheduled on other instances and in `steady state`
   5. If service has an ELB, it will detach the old container instance
-  6. ssh into the instance and `docker stop` each container
+  6. Use the EC2 Run Command API to `docker stop` each container
     * Uses the configurable stop timeout
   7. Stop & terminate the instance
 
@@ -36,14 +36,6 @@ You will need to set 3 AWS environment variables to run this script:
   - `AWS_ACCESS_KEY_ID`
   - `AWS_SECRET_ACCESS_KEY`
   - `AWS_REGION`
-  - `SSH_AUTH_SOCK`
-    - If this envvar doesn't exist try running:
-    ```bash
-    eval `ssh-agent -s`
-    ssh-add ~/.ssh/id_rsa
-    ssh-add ~/.ssh/clever.pem
-    ```
-
 
 ## rollover.sh
 
@@ -52,7 +44,7 @@ The most basic usage only requires a cluster name and scaling group:
 ./rollover.sh rollover <cluster_name> <asg name>
 ```
 
-To remove nodes instead, use the scaledown command: 
+To remove nodes instead, use the scaledown command:
 ```
 ./rollover.sh scaledown <cluster_name> <asg name>
 ```
