@@ -14,9 +14,9 @@ import ec2
 import elb
 import ecs
 import scaling
-import ssh
 import utils
 
+import boto3
 
 SERVICE_ACTIVE = "ACTIVE"
 
@@ -336,18 +336,6 @@ def main_rollover(args):
             return False
 
     #
-    # test ssh works before proceeding
-    #
-    sys.stdout.write("Testing ssh ...")
-    sys.stdout.flush()
-    if not ssh.test(selected_ecs_instances[0].ip_address):
-        print "ERROR: Could not ssh into %s " % selected_ecs_instances[0].ec2_id
-        print "You may need to configure your network and/or ssh settings to " \
-              "allow for non-interactive access to your EC2 machines."
-        return False
-    print "done"
-
-    #
     # Iterate through each instance
     #
     skipped_shutdown = []
@@ -448,12 +436,15 @@ def main_rollover(args):
         sys.stdout.flush()
         ip_address = ecs_instance.ip_address
         if not args.dry_run:
-            if not ssh.test_docker(ip_address):
+            # TEST DOCKER IS RUNNING
+            if not run_with_timeout(ecs_instance.ec2_id, 'docker ps -a -q', 10):
                 print "FAILED to run `docker ps`. Skipping shutdown for %s" % (ecs_instance)
                 skipped_shutdown.append(ecs_instance)
                 continue
 
-            if not ssh.stop_all_containers(ip_address, args.timeout):
+            # STOP ALL DOCKER CONTAINERS
+            command = 'docker stop -t %d $(docker ps -a -q)' % args.timeout
+            if not run_with_timeout(ecs_instance.ec2_id, command, args.timeout):
                 print "FAILED"
                 print "WARNING: Failed to stop all containers"
         print "done"
@@ -486,24 +477,42 @@ def main_rollover(args):
     return return_value
 
 
+def run_with_timeout(instance_id, command, timeout):
+    """
+        @param instance_id str
+        @param command str
+        @param timeout int
+        @return bool if command succeeded
+    """
+
+    client = boto3.client('ssm')
+    response = client.send_command(
+        InstanceIds = [instance_id],
+        DocumentName = 'AWS-RunShellScript',
+        TimeoutSeconds = max(timeout, 30),
+        Comment = '',
+        Parameters = {
+            'commands': ["#!/bin/bash", command]
+        },
+        OutputS3BucketName = 'clever-test',
+        OutputS3KeyPrefix = 'test-rollover'
+    )
+
+    # Error sending response
+    if response.get('ResponseMetadata', {}).get('HttpStatusCode') is not 200:
+        return False
+
+    # To get the command output
+    output = response.get('CommandInvocations')[0].get('CommandPlugins')[0].get('Output')
+
+    return response.get('CommandInvocations')[0].get('CommandPlugins')[0].get('ResponseCode') == 0
+
 def main_docker_stop(args):
     """
     Main entry point for the docker-stop command
     """
-    ec2_client = ec2.EC2Client()
-    info = ec2_client.describe_instances([args.ec2_id])
-    return ssh.stop_all_containers(info[args.ec2_id]['PrivateIpAddress'],
-                                   args.timeout)
-
-
-def main_ssh_test(args):
-    """
-    Main entry point for the ssh-test command
-    """
-    ec2_client = ec2.EC2Client()
-    info = ec2_client.describe_instances([args.ec2_id])
-    return ssh.test(info[args.ec2_id]['PrivateIpAddress'])
-
+    command = "docker stop -t %d $(docker ps -a -q)" % args.timeout
+    return run_with_timeout(args.ec2_id, command, args.timeout)
 
 def main_check_for_task(args):
     sys.stdout.write("Querying ECS ...")
@@ -657,16 +666,6 @@ def main():
     ec2_terminate_parser.add_argument('ec2_id',
                                       nargs='+',
                                       help="EC2 instance id")
-
-    #
-    # ssh-test args
-    #
-    ssh_test_parser = subparsers.add_parser('ssh-test',
-                                            help="Test connection to ec2 machine")
-    ssh_test_parser.set_defaults(func=main_ssh_test)
-
-    ssh_test_parser.add_argument('ec2_id',
-                                 help="EC2 instance id")
 
     #
     # check for a task
