@@ -447,7 +447,7 @@ def main_rollover(args):
             if not run_with_timeout(ecs_instance.ec2_id, command, args.timeout):
                 print "FAILED"
                 print "WARNING: Failed to stop all containers"
-        print "done"
+        print "done stopping docker containers"
 
         #
         # Stop and terminate the EC2 instance
@@ -457,7 +457,7 @@ def main_rollover(args):
         if not args.dry_run:
             ec2_client.stop_and_wait_for_instances([ecs_instance.ec2_id])
             ec2_client.terminate_and_wait_for_instances([ecs_instance.ec2_id])
-        print "done"
+        print "done stopping and terminating instance"
         print
 
     # Print the instances that need to be manually shutdown
@@ -489,10 +489,11 @@ def run_with_timeout(instance_id, command, timeout):
     response = client.send_command(
         InstanceIds = [instance_id],
         DocumentName = 'AWS-RunShellScript',
-        TimeoutSeconds = max(timeout, 30),
+        TimeoutSeconds = 3600,
         Comment = '',
         Parameters = {
-            'commands': ["#!/bin/bash", command]
+            'commands': ["#!/bin/bash", command],
+            'executionTimeout': [str(timeout)]
         },
         OutputS3BucketName = 'clever-test',
         OutputS3KeyPrefix = 'test-rollover'
@@ -507,18 +508,26 @@ def run_with_timeout(instance_id, command, timeout):
 
     # Not sure when/if this actually happens; adding as a safeguard for now.
     if not command_id:
+        print "Error: could not find command ID in response", response
         return False
 
     invocation_response = client.list_command_invocations(CommandId=command_id, InstanceId=instance_id, Details=True)
+    result = invocation_response.get('CommandInvocations')[0].get('CommandPlugins')[0]
+
     # Wait until command reaches final state
-    while invocation_response.get('Status') in ['Pending', 'InProgress', 'Cancelling']:
+    while result.get('Status') in ['Pending', 'InProgress', 'Cancelling']:
         time.sleep(2)
+        print "INFO: current command status is", result.get('Status')
         invocation_response = client.list_command_invocations(CommandId=command_id, InstanceId=instance_id, Details=True)
+        result = invocation_response.get('CommandInvocations')[0].get('CommandPlugins')[0]
+
+    print "Final command invocation response:", invocation_response
 
     # To get the command output
-    output = invocation_response.get('CommandInvocations')[0].get('CommandPlugins')[0].get('Output')
+    output = result.get('Output')
+    print "Command invocation output", output
 
-    return invocation_response.get('CommandInvocations')[0].get('CommandPlugins')[0].get('ResponseCode') == 0
+    return result.get('ResponseCode') == 0
 
 def main_docker_stop(args):
     """
