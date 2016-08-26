@@ -492,8 +492,7 @@ def run_with_timeout(instance_id, command, timeout):
         TimeoutSeconds = 3600,
         Comment = '',
         Parameters = {
-            'commands': ["#!/bin/bash", command],
-            'executionTimeout': [str(timeout)]
+            'commands': ["#!/bin/bash", command]
         },
         OutputS3BucketName = 'clever-test',
         OutputS3KeyPrefix = 'test-rollover'
