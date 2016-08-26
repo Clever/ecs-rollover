@@ -513,19 +513,20 @@ def run_with_timeout(instance_id, command, timeout):
 
     invocation_response = client.list_command_invocations(CommandId=command_id, InstanceId=instance_id, Details=True)
     result = invocation_response.get('CommandInvocations')[0].get('CommandPlugins')[0]
+    print "INVOCATION RESPONSE:", invocation_response
 
     # Wait until command reaches final state
     while result.get('Status') in ['Pending', 'InProgress', 'Cancelling']:
         time.sleep(2)
-        print "INFO: current command status is", result.get('Status')
         invocation_response = client.list_command_invocations(CommandId=command_id, InstanceId=instance_id, Details=True)
         result = invocation_response.get('CommandInvocations')[0].get('CommandPlugins')[0]
+        print "INVOCATION RESPONSE:", invocation_response
 
     print "Final command invocation response:", invocation_response
 
     # To get the command output
     output = result.get('Output')
-    print "Command invocation output", output
+    print "Command invocation output:", output
 
     return result.get('ResponseCode') == 0
 
