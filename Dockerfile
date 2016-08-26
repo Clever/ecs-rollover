@@ -10,7 +10,6 @@ COPY src/ecs.py /opt/ecs-rollover/
 COPY src/elb.py /opt/ecs-rollover/
 COPY src/rollover.py /opt/ecs-rollover/
 COPY src/scaling.py /opt/ecs-rollover/
-COPY src/ssh.py /opt/ecs-rollover/
 COPY src/utils.py /opt/ecs-rollover/
 
 COPY src/entrypoint.sh /opt/ecs-rollover/
