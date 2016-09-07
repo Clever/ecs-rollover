@@ -351,7 +351,7 @@ def main_rollover(args):
     # Iterate through each instance
     #
     skipped_shutdown = []
-    return_value = True
+    steady_state_errors = set()
     for ecs_instance in selected_ecs_instances:
         print "Preparing to remove %s" % (ecs_instance)
 
@@ -423,10 +423,9 @@ def main_rollover(args):
                                                         services_on_instance,
                                                         service_events)
                 if failed_services:
-                    return_value = False
                     service_names = [service_descriptions[sid]['serviceName'] for sid in failed_services]
                     print "ERROR: Timeout while waiting for %s to reach steady state" % (service_names)
-                    break
+                    steady_state_errors = steady_state_errors.union(service_names)
             print "done"
 
             sys.stdout.write("Removing instance from any service ELBs ...")
@@ -469,6 +468,13 @@ def main_rollover(args):
         print "done"
         print
 
+    # Print the services that had trouble migrating
+    if steady_state_errors:
+        print "#"*80
+        print "The following services timed out while waiting to reach steady state:"
+        for name in steady_state_errors:
+            print name
+
     # Print the instances that need to be manually shutdown
     if skipped_shutdown:
         print "#"*80
@@ -477,13 +483,11 @@ def main_rollover(args):
         for instance in skipped_shutdown:
             print instance
 
-    if not return_value:
-        print "NOTE: Some errors were encountered."
-    elif args.scale_down:
+    if args.scale_down:
         print "Scale down complete!"
     else:
         print "Rollover complete!"
-    return return_value
+    return 0
 
 
 def main_docker_stop(args):
