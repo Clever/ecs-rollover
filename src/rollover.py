@@ -1,6 +1,7 @@
 #! /usr/bin/env python
 
 import argparse
+import datetime
 import fnmatch
 import itertools
 from operator import itemgetter
@@ -20,6 +21,8 @@ import boto3
 
 SERVICE_ACTIVE = "ACTIVE"
 
+# S3 bucket for EC2 Run Command output
+EC2_RUN_OUTPUT_S3_BUCKET = 'clever-test'
 
 class ECSInstance(object):
     """
@@ -494,8 +497,8 @@ def run_with_timeout(instance_id, command, timeout):
         Parameters = {
             'commands': ["#!/bin/bash", command]
         },
-        OutputS3BucketName = 'clever-test',
-        OutputS3KeyPrefix = 'test-rollover'
+        OutputS3BucketName = EC2_RUN_OUTPUT_S3_BUCKET,
+        OutputS3KeyPrefix = 'rollover-' + datetime.datetime.now().strftime('%Y%m%d')
     )
 
     # Error sending response
