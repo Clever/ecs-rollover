@@ -22,7 +22,7 @@ import boto3
 SERVICE_ACTIVE = "ACTIVE"
 
 # S3 bucket for EC2 Run Command output
-EC2_RUN_OUTPUT_S3_BUCKET = 'clever-test'
+EC2_RUN_OUTPUT_S3_BUCKET = 'ec2-run-command-output'
 
 class ECSInstance(object):
     """
