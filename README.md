@@ -63,6 +63,13 @@ You can remove an ec2 instance from a specific elb or from all of them using the
 ./rollover.sh elb-detach <ec2_id> [elb_name [elb_name ...]]
 ```
 
+### docker-stop
+
+The docker-stop command allows you to stop docker on instances:
+```
+./rollover.sh docker-stop ec2_id [ec2_id ...]
+```
+
 ### ec2-stop
 
 The ec2-stop command allows you to stop ec2 instances:
