@@ -77,7 +77,7 @@ class ECSInstance(object):
         return cmp(self.ecs_id, other.ecs_id)
 
     def __repr__(self):
-        return "{} ({} - {}) [{:3.0f}% cpu, {:3.0f}% mem] -- {}".format(self.ecs_id, self.ec2_id, self.availability_zone, self.cpu_utilized, self.mem_utilized, self.launch_time)
+        return "{} ({} - {} - {}) [{:3.0f}% cpu, {:3.0f}% mem] -- {}".format(self.ecs_id, self.ec2_id, self.ip_address, self.availability_zone, self.cpu_utilized, self.mem_utilized, self.launch_time)
 
 
 def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by="launch_time"):
