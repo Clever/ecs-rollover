@@ -518,15 +518,21 @@ def run_with_timeout(instance_id, command, timeout):
         return False
 
     invocation_response = client.list_command_invocations(CommandId=command_id, InstanceId=instance_id, Details=True)
-    result = invocation_response.get('CommandInvocations')[0].get('CommandPlugins')[0]
+    invocations = invocation_response.get('CommandInvocations')
+    if not invocations:
+        print "ERROR: failed to run `%s` on instance `%s`" % (command, instance_id)
+        return False
+
+    result = invocations[0].get('CommandPlugins', [{}])[0]
 
     # Wait until command reaches final state
     while result.get('Status') in ['Pending', 'InProgress', 'Cancelling']:
         time.sleep(2)
         invocation_response = client.list_command_invocations(CommandId=command_id, InstanceId=instance_id, Details=True)
-        result = invocation_response.get('CommandInvocations')[0].get('CommandPlugins')[0]
+        result = invocation_response.get('CommandInvocations', [{}])[0].get('CommandPlugins', [{}])[0]
 
     return result.get('ResponseCode') == 0
+
 
 def main_docker_stop(args):
     """
@@ -534,6 +540,7 @@ def main_docker_stop(args):
     """
     command = "docker stop -t %d $(docker ps -a -q)" % args.timeout
     return run_with_timeout(args.ec2_id, command, args.timeout)
+
 
 def main_check_for_task(args):
     sys.stdout.write("Querying ECS ...")
