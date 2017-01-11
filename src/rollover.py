@@ -129,7 +129,7 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by=
     else:
         print "Which instances do you want to rollover?"
 
-    selected_instances = selected_instances(ecs_instances, sort_by=sort_by)
+    selected_instances = select_instances(ecs_instances, sort_by=sort_by)
 
     # remove the selected instances to determine the remaining AZ balance
     to_remove = {}
@@ -347,8 +347,10 @@ def main_rollover(args):
 
         max_count = sorted(counts_to_service.keys(), reverse=True)[0]
         if max_count > len(remaining_instances):
-            print "ERROR: New cluster size (%d) is smaller than largest services: %s (%d)" % (len(remaining_instances), ", ".join(counts_to_service[max_count]), max_count)
-            return False
+            print "WARNING: New cluster size (%d) is smaller than largest services: %s (%d)" % (len(remaining_instances), ", ".join(counts_to_service[max_count]), max_count)
+            confirm = raw_input("Do you want to continue [y/N]? ")
+            if confirm.lower() != 'y':
+                return False
 
     #
     # Iterate through each instance
@@ -463,7 +465,7 @@ def main_rollover(args):
             # STOP ALL DOCKER CONTAINERS
             command = 'docker stop -t %d $(docker ps -a -q)' % args.timeout
             ret, out = run_with_timeout(ecs_instance.ec2_id,
-                                        command, args.timeout)
+                                        command, args.timeout + 2)
             if ret != 0:
                 print "FAILED"
                 print "WARNING: Failed to stop all containers: %s" % (out)
@@ -554,7 +556,7 @@ def run_with_timeout(instance_id, command, timeout):
 
     invocation = wait_for_invocation(client, command_id, instance_id, timeout)
     if not invocation or 'CommandPlugins' not in invocation:
-        return -1, "ERROR: Timed out while waiting for command"
+        return -1, "ERROR: Timed out while waiting for `%s`" % (command)
 
     return_code = None
     output = ""
