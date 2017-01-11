@@ -24,6 +24,7 @@ SERVICE_ACTIVE = "ACTIVE"
 # S3 bucket for EC2 Run Command output
 EC2_RUN_OUTPUT_S3_BUCKET = 'ec2-run-command-output'
 
+
 class ECSInstance(object):
     """
     properties:
@@ -80,24 +81,13 @@ class ECSInstance(object):
         return "{} ({} - {} - {}) [{:3.0f}% cpu, {:3.0f}% mem] -- {}".format(self.ecs_id, self.ec2_id, self.ip_address, self.availability_zone, self.cpu_utilized, self.mem_utilized, self.launch_time)
 
 
-def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by="launch_time"):
+def select_instances(ecs_instances, sort_by="launch_time"):
     """
-    sorts the instances into an order that tries not to cause an AZ imbalance
-    when removing instances. Also, prompts the user if there are issues.
+    Prompts the user to select from a list of ecs instances
     @param ecs_instances: list of ECSInstance() objects
-    @param asg_contents: dictionary of ec2_ids to availability zones in the ASG
-    @param scale_down: bool if scale down or rollover
     @param sort_by: string ("launch_time" or "utilization") for how to sort printed instances
-    @return: sorted list of ECSInstance() objects to remove
+    @return: list of selected ECSInstance() objects
     """
-    all_azs = set([az for az in asg_contents.values()])
-
-    # ask the user which instances to remove:
-    if scale_down:
-        print "Which instances do you want to remove?"
-    else:
-        print "Which instances do you want to rollover?"
-
     # allow sorting by launch_time or utilization
     sorts = dict(
         utilization=dict(key=lambda i: i.cpu_utilized + i.mem_utilized, reverse=True),
@@ -118,6 +108,28 @@ def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by=
         else:
             index = int(selection)
             selected_instances.append(ecs_instances[index])
+    return selected_instances
+
+
+def prompt_for_instances(ecs_instances, asg_contents, scale_down=False, sort_by="launch_time"):
+    """
+    sorts the instances into an order that tries not to cause an AZ imbalance
+    when removing instances. Also, prompts the user if there are issues.
+    @param ecs_instances: list of ECSInstance() objects
+    @param asg_contents: dictionary of ec2_ids to availability zones in the ASG
+    @param scale_down: bool if scale down or rollover
+    @param sort_by: string ("launch_time" or "utilization") for how to sort printed instances
+    @return: sorted list of ECSInstance() objects to remove
+    """
+    all_azs = set([az for az in asg_contents.values()])
+
+    # ask the user which instances to remove:
+    if scale_down:
+        print "Which instances do you want to remove?"
+    else:
+        print "Which instances do you want to rollover?"
+
+    selected_instances = selected_instances(ecs_instances, sort_by=sort_by)
 
     # remove the selected instances to determine the remaining AZ balance
     to_remove = {}
@@ -439,16 +451,22 @@ def main_rollover(args):
         ip_address = ecs_instance.ip_address
         if not args.dry_run:
             # TEST DOCKER IS RUNNING
-            if not run_with_timeout(ecs_instance.ec2_id, 'docker ps -a -q', 10):
-                print "FAILED to run `docker ps`. Skipping shutdown for %s" % (ecs_instance)
+            ret, out = run_with_timeout(ecs_instance.ec2_id,
+                                        'docker ps -a -q',
+                                        10)
+            if ret != 0:
+                print "FAILED to run `docker ps`: %s" % (out)
+                print "Skipping shutdown for %s" % (ecs_instance)
                 skipped_shutdown.append(ecs_instance)
                 continue
 
             # STOP ALL DOCKER CONTAINERS
             command = 'docker stop -t %d $(docker ps -a -q)' % args.timeout
-            if not run_with_timeout(ecs_instance.ec2_id, command, args.timeout):
+            ret, out = run_with_timeout(ecs_instance.ec2_id,
+                                        command, args.timeout)
+            if ret != 0:
                 print "FAILED"
-                print "WARNING: Failed to stop all containers"
+                print "WARNING: Failed to stop all containers: %s" % (out)
         print "done stopping docker containers"
 
         #
@@ -484,54 +502,70 @@ def main_rollover(args):
     return 0
 
 
+def wait_for_invocation(ssm_client, command_id, instance_id, timeout):
+    """
+    Wait for results of a ssm command
+    @param ssm_client: ssm client
+    @param command_id: ssm command id as return by send_command()
+    @param instance_id: ec2_id
+    @return: invocation object
+    """
+    started = time.time()
+    while time.time() - started < timeout:
+        paginator = ssm_client.get_paginator('list_command_invocations')
+        for resp in paginator.paginate(CommandId=command_id, InstanceId=instance_id, Details=True):
+            for invocation in resp['CommandInvocations']:
+                if invocation.get('Status') in ["Success", "Cancelled"]:
+                    return invocation
+        time.sleep(1)
+    return None
+
+
 def run_with_timeout(instance_id, command, timeout):
     """
-        @param instance_id str
-        @param command str
-        @param timeout int
-        @return bool if command succeeded
+    Run a shell command on an ec2 instance
+    @param instance_id str
+    @param command str
+    @param timeout int
+    @return tuple of (return code, error message/output)
     """
 
     client = boto3.client('ssm')
     response = client.send_command(
-        InstanceIds = [instance_id],
-        DocumentName = 'AWS-RunShellScript',
-        TimeoutSeconds = 3600,
-        Comment = '',
-        Parameters = {
+        InstanceIds=[instance_id],
+        DocumentName='AWS-RunShellScript',
+        TimeoutSeconds=3600,
+        Comment='',
+        Parameters={
             'commands': ["#!/bin/bash", command]
         },
-        OutputS3BucketName = EC2_RUN_OUTPUT_S3_BUCKET,
-        OutputS3KeyPrefix = 'rollover-' + datetime.datetime.now().strftime('%Y%m%d')
+        OutputS3BucketName=EC2_RUN_OUTPUT_S3_BUCKET,
+        OutputS3KeyPrefix='rollover-' + datetime.datetime.now().strftime('%Y%m%d')
     )
 
     # Error sending response
     if response.get('ResponseMetadata', {}).get('HTTPStatusCode') is not 200:
-        print "ERROR sending command:", response
-        return False
+        return -1, "SSM ERROR: failed to send command. %s" %(response)
 
     command_id = response.get('Command').get('CommandId')
-
     # Not sure when/if this actually happens; adding as a safeguard for now.
     if not command_id:
-        print "Error: could not find command ID in response", response
-        return False
+        return -1, "SSM ERROR: could not find command ID in response"
 
-    invocation_response = client.list_command_invocations(CommandId=command_id, InstanceId=instance_id, Details=True)
-    invocations = invocation_response.get('CommandInvocations')
-    if not invocations:
-        print "ERROR: failed to run `%s` on instance `%s`" % (command, instance_id)
-        return False
+    invocation = wait_for_invocation(client, command_id, instance_id, timeout)
+    if not invocation or 'CommandPlugins' not in invocation:
+        return -1, "ERROR: Timed out while waiting for command"
 
-    result = invocations[0].get('CommandPlugins', [{}])[0]
+    return_code = None
+    output = ""
+    for plugin in invocation['CommandPlugins']:
+        if "ResponseCode" in plugin:
+            return_code = plugin['ResponseCode']
+            output = plugin['Output']
 
-    # Wait until command reaches final state
-    while result.get('Status') in ['Pending', 'InProgress', 'Cancelling']:
-        time.sleep(2)
-        invocation_response = client.list_command_invocations(CommandId=command_id, InstanceId=instance_id, Details=True)
-        result = invocation_response.get('CommandInvocations', [{}])[0].get('CommandPlugins', [{}])[0]
-
-    return result.get('ResponseCode') == 0
+    if return_code is None:
+        return -1, "SSM ERROR: failed to get return code"
+    return return_code, output
 
 
 def main_docker_stop(args):
@@ -539,7 +573,10 @@ def main_docker_stop(args):
     Main entry point for the docker-stop command
     """
     command = "docker stop -t %d $(docker ps -a -q)" % args.timeout
-    return run_with_timeout(args.ec2_id, command, args.timeout)
+    ret, out = run_with_timeout(args.ec2_id, command, args.timeout)
+    if ret != 0:
+        print "docker stop failed:", out
+    return ret == 0
 
 
 def main_check_for_task(args):
