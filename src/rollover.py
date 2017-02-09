@@ -463,12 +463,10 @@ def main_rollover(args):
                 continue
 
             # STOP ALL DOCKER CONTAINERS
-            command = 'docker stop -t %d $(docker ps -a -q)' % args.timeout
-            ret, out = run_with_timeout(ecs_instance.ec2_id,
-                                        command, args.timeout + 2)
+            ret, out = docker_stop(ecs_instance.ec2_id, args.timeout)
             if ret != 0:
                 print "FAILED"
-                print "WARNING: Failed to stop all containers: %s" % (out)
+                print "WARNING: %s" % (out)
         print "done stopping docker containers"
 
         #
@@ -533,6 +531,7 @@ def run_with_timeout(instance_id, command, timeout):
     """
 
     client = boto3.client('ssm')
+    # Note: TimeoutSeconds is the timeout for AWS to begin running the command
     response = client.send_command(
         InstanceIds=[instance_id],
         DocumentName='AWS-RunShellScript',
@@ -547,7 +546,7 @@ def run_with_timeout(instance_id, command, timeout):
 
     # Error sending response
     if response.get('ResponseMetadata', {}).get('HTTPStatusCode') is not 200:
-        return -1, "SSM ERROR: failed to send command. %s" %(response)
+        return -1, "SSM ERROR: failed to send command. %s" % (response)
 
     command_id = response.get('Command').get('CommandId')
     # Not sure when/if this actually happens; adding as a safeguard for now.
@@ -570,14 +569,40 @@ def run_with_timeout(instance_id, command, timeout):
     return return_code, output
 
 
+def docker_stop(ec2_id, timeout):
+    """
+    Stop all docker containers
+    """
+    # NOTE: `docker stop ...` does not stop containers in parallel.
+    ret, out = run_with_timeout(ec2_id, "docker ps -q", 10)
+    if ret != 0:
+        return ret, "ERROR: Failed to list docker containers"
+
+    containers = [l.strip() for l in out.splitlines() if l.strip()]
+    failed = []
+    for container_id in containers:
+        command = "docker stop -t %d %s" % (timeout, container_id)
+        ret, out = run_with_timeout(ec2_id, command, timeout + 2)
+        if ret != 0:
+            failed.append(container_id)
+
+    if failed:
+        return 1, "ERROR: Failed to stop containers: %s" % (", ".join(failed))
+    return 0, ""
+
+
 def main_docker_stop(args):
     """
     Main entry point for the docker-stop command
     """
-    command = "docker stop -t %d $(docker ps -a -q)" % args.timeout
-    ret, out = run_with_timeout(args.ec2_id, command, args.timeout)
+    sys.stdout.write("Stopping all containers on %s ..." % (args.ec2_id))
+    sys.stdout.flush()
+    ret, out = docker_stop(args.ec2_id, args.timeout)
     if ret != 0:
-        print "docker stop failed:", out
+        print "FAILED"
+        print out
+    else:
+        print "Done"
     return ret == 0
 
 
@@ -638,7 +663,7 @@ def main():
                                  '--timeout',
                                  type=int,
                                  default=30,
-                                 help="`docker stop` timeout")
+                                 help="`docker stop` timeout (per container)")
     rollover_parser.add_argument('-s',
                                  '--sort',
                                  choices=['launch_time', 'utilization'],
@@ -665,7 +690,7 @@ def main():
                                   '--timeout',
                                   type=int,
                                   default=30,
-                                  help="`docker stop` timeout")
+                                  help="`docker stop` timeout (per container)")
     scaledown_parser.add_argument('-s',
                                  '--sort',
                                  choices=['launch_time', 'utilization'],
@@ -708,7 +733,7 @@ def main():
                                     '--timeout',
                                     type=int,
                                     default=30,
-                                    help="`docker stop` timeout")
+                                    help="`docker stop` timeout (per container)")
     docker_stop_parser.add_argument('ec2_id',
                                     help="EC2 instance id")
 
