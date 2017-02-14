@@ -8,6 +8,7 @@ from operator import itemgetter
 import os
 import sys
 import time
+import traceback
 import math
 
 # local imports
@@ -529,20 +530,24 @@ def run_with_timeout(instance_id, command, timeout):
     @param timeout int
     @return tuple of (return code, error message/output)
     """
-
     client = boto3.client('ssm')
     # Note: TimeoutSeconds is the timeout for AWS to begin running the command
-    response = client.send_command(
-        InstanceIds=[instance_id],
-        DocumentName='AWS-RunShellScript',
-        TimeoutSeconds=3600,
-        Comment='',
-        Parameters={
-            'commands': ["#!/bin/bash", command]
-        },
-        OutputS3BucketName=EC2_RUN_OUTPUT_S3_BUCKET,
-        OutputS3KeyPrefix='rollover-' + datetime.datetime.now().strftime('%Y%m%d')
-    )
+    try:
+        response = client.send_command(
+            InstanceIds=[instance_id],
+            DocumentName='AWS-RunShellScript',
+            TimeoutSeconds=3600,
+            Comment='',
+            Parameters={
+                'commands': ["#!/bin/bash", command]
+            },
+            OutputS3BucketName=EC2_RUN_OUTPUT_S3_BUCKET,
+            OutputS3KeyPrefix='rollover-' + datetime.datetime.now().strftime('%Y%m%d')
+        )
+    except Exception as e:
+        ex_type, ex, tb = sys.exc_info()
+        err_msg = "\n".join(traceback.format_tb(tb) + [str(e)])
+        return -1, "SSM Error: failed to send SSM command to AWS:\n%s" % (err_msg)
 
     # Error sending response
     if response.get('ResponseMetadata', {}).get('HTTPStatusCode') is not 200:
