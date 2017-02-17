@@ -578,22 +578,8 @@ def docker_stop(ec2_id, timeout):
     """
     Stop all docker containers
     """
-    # NOTE: `docker stop ...` does not stop containers in parallel.
-    ret, out = run_with_timeout(ec2_id, "docker ps -q", 10)
-    if ret != 0:
-        return ret, "ERROR: Failed to list docker containers"
-
-    containers = [l.strip() for l in out.splitlines() if l.strip()]
-    failed = []
-    for container_id in containers:
-        command = "docker stop -t %d %s" % (timeout, container_id)
-        ret, out = run_with_timeout(ec2_id, command, timeout + 2)
-        if ret != 0:
-            failed.append(container_id)
-
-    if failed:
-        return 1, "ERROR: Failed to stop containers: %s" % (", ".join(failed))
-    return 0, ""
+    command = 'docker ps -q | xargs -n 1 -P 40 docker stop -t %d' % timeout
+    return run_with_timeout(ec2_id, command, timeout + 2)
 
 
 def main_docker_stop(args):
