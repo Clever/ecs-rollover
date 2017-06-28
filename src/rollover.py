@@ -12,6 +12,7 @@ import traceback
 import math
 
 # local imports
+import alb
 import ec2
 import elb
 import ecs
@@ -434,16 +435,20 @@ def main_rollover(args):
                     steady_state_errors = steady_state_errors.union(service_names)
             print "done"
 
-            sys.stdout.write("Removing instance from any service ELBs ...")
+            sys.stdout.write("Removing instance from any service Load Balancers ...")
             sys.stdout.flush()
             if not args.dry_run:
                 for service_id in services_on_instance:
-                    # remove the current instance from the ELB if there is one
+                    # remove the current instance from the Load Balancer if there is one
                     # defined
                     service = service_descriptions[service_id]
                     for balancer in service.get('loadBalancers', []):
-                        elb_client = elb.ELBClient(balancer['loadBalancerName'])
-                        elb_client.deregister_instances([ecs_instance.ec2_id])
+                        if 'loadBalancerName' in balancer:
+                            elb_client = elb.ELBClient(balancer['loadBalancerName'])
+                            elb_client.deregister_instances([ecs_instance.ec2_id])
+                        elif 'targetGroupArn' in balancer:
+                            alb_group = alb.NewALBGroup(balancer['targetGroupArn'])
+                            alb_group.deregister_targets([ecs_instance.ec2_id])
             print "done"
 
         #
@@ -696,6 +701,21 @@ def main():
                                   help="fully qualified name of the cluster")
     scaledown_parser.add_argument('asg',
                                   help="auto scaling group for the cluster")
+
+    #
+    # alb-detach args
+    #
+    alb_detach_parser = subparsers.add_parser('alb-detach',
+                                              help="Remove an EC2 instance "
+                                                   "from ALBs")
+    alb_detach_parser.set_defaults(func=alb.main_detach)
+
+    alb_detach_parser.add_argument('ec2_id',
+                                   help="EC2 instance id")
+    alb_detach_parser.add_argument('target_group_arn',
+                                   nargs='*',
+                                   help="ALB target group ARN to detach from. "
+                                        "If not provided, all will be queried")
 
     #
     # elb-detach args
