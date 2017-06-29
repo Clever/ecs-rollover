@@ -8,6 +8,7 @@ COPY src/__init__.py /opt/ecs-rollover/
 COPY src/ec2.py /opt/ecs-rollover/
 COPY src/ecs.py /opt/ecs-rollover/
 COPY src/elb.py /opt/ecs-rollover/
+COPY src/alb.py /opt/ecs-rollover/
 COPY src/rollover.py /opt/ecs-rollover/
 COPY src/scaling.py /opt/ecs-rollover/
 COPY src/utils.py /opt/ecs-rollover/
