@@ -258,7 +258,7 @@ def wait_for_all_services(ecs_client, services_on_instance, service_events, serv
     for service_id in services_on_instance:
         last_event = service_events[service_id][-1]
         if len(service_descriptions[service_id]["placementConstraints"]) == 1 and service_descriptions[service_id]["placementConstraints"][0]["type"] == "distinctInstance":
-            # skip distinct instance services
+            print "skipping distinct instance service:", service_id
             continue
         completed, event = ecs_client.wait_for_service_steady_state(service_id,
                                                                     last_event)
