@@ -246,7 +246,7 @@ def get_added_asg_instances(old_instances, new_instances):
     return [i for i in new_ids if i not in old_ids]
 
 
-def wait_for_all_services(ecs_client, services_on_instance, service_events):
+def wait_for_all_services(ecs_client, services_on_instance, service_events, service_descriptions):
     """
     Wait for all services on an instance to reach steady state
     @param ecs_client: ecs client object
@@ -257,6 +257,9 @@ def wait_for_all_services(ecs_client, services_on_instance, service_events):
     failed = []
     for service_id in services_on_instance:
         last_event = service_events[service_id][-1]
+        if len(service_descriptions[service_id]["placementConstraints"]) == 1 and service_descriptions[service_id]["placementConstraints"][0]["type"] == "distinctInstance":
+            print "skipping distinct instance service:", service_id
+            continue
         completed, event = ecs_client.wait_for_service_steady_state(service_id,
                                                                     last_event)
         # push the new event into the list for that service so
@@ -428,7 +431,8 @@ def main_rollover(args):
             if not args.dry_run:
                 failed_services = wait_for_all_services(ecs_client,
                                                         services_on_instance,
-                                                        service_events)
+                                                        service_events,
+                                                        service_descriptions)
                 if failed_services:
                     service_names = [service_descriptions[sid]['serviceName'] for sid in failed_services]
                     print "ERROR: Timeout while waiting for %s to reach steady state" % (service_names)
